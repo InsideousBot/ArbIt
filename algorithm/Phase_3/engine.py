@@ -21,6 +21,8 @@ import logging
 import time
 from typing import Optional
 
+from algorithm.Phase_2.models import CandidatePair as Phase2CandidatePair
+from algorithm.Phase_3.adapters import ensure_canonical_candidate
 from algorithm.models import CandidatePair
 from algorithm.Phase_3.arb_filter import check_arb_compatibility
 from algorithm.Phase_3.classifier import classify_pair
@@ -72,11 +74,14 @@ class Phase3Engine:
         self._llm_judge = LLMJudge(config=self._config)
         self._graph = EventGraph()
 
-    async def process_candidate(self, candidate: CandidatePair) -> Phase3Decision:
+    async def process_candidate(
+        self, candidate: CandidatePair | Phase2CandidatePair
+    ) -> Phase3Decision:
         """
         Run all 7 layers for a single candidate pair.
         Returns a Phase3Decision with full provenance.
         """
+        candidate = ensure_canonical_candidate(candidate)
         start_ms = time.monotonic() * 1000
         candidate_id = candidate.candidate_id
         market_a = candidate.market_a
@@ -228,7 +233,7 @@ class Phase3Engine:
             )
 
     async def process_batch(
-        self, candidates: list[CandidatePair]
+        self, candidates: list[CandidatePair | Phase2CandidatePair]
     ) -> list[Phase3Decision]:
         """Process a batch of candidates in parallel (asyncio.gather)."""
         logger.info("Phase3: processing batch of %d candidates", len(candidates))

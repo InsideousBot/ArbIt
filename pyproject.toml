@@ -33,6 +33,8 @@ pandas = "^2.2"
 # faiss-cpu: no Python 3.14 wheels yet — add when available, or use pgvector
 # tiktoken: no Python 3.14 wheels yet — add when available
 openai = "^1.59"
+sentence-transformers = "^5.1"
+pymongo = "^4.14"
 
 # Phase 5 — scheduling
 apscheduler = "^3.10"
@@ -43,6 +45,7 @@ pytest-asyncio = "^0.25"
 black = "^24.10"
 ruff = "^0.9"
 mypy = "^1.14"
+mongomock = "^4.3"
 
 [build-system]
 requires = ["poetry-core"]
@@ -66,4 +69,7 @@ ignore_missing_imports = true
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
-testpaths = ["tests", "algorithm/Phase_3/tests"]
+markers = [
+    "slow: tests that require model downloads or heavier integration setup",
+]
+testpaths = ["tests", "algorithm/Phase_2/tests", "algorithm/Phase_3/tests", "simulation/tests"]

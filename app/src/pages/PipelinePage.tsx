@@ -31,25 +31,35 @@ export default function PipelinePage() {
   }, []);
 
   return (
-    <div className="flex flex-col h-full">
-      <div className="flex items-center justify-between px-5 py-3 border-b border-border shrink-0">
-        <span className="text-[10px] text-text-muted tracking-[3px]">PIPELINE STATUS</span>
-        <div className="flex items-center gap-6">
+    <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
+      {/* Header */}
+      <div style={{
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        padding: '0 20px',
+        height: '36px',
+        borderBottom: '1px solid #0a0d1a',
+        flexShrink: 0,
+        background: 'linear-gradient(180deg, #070a14 0%, #060810 100%)',
+      }}>
+        <span style={{ fontSize: '8px', color: '#1a2040', letterSpacing: '0.3em' }}>PIPELINE STATUS</span>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '20px' }}>
           {status?.last_run && (
-            <span className="text-[10px] text-text-secondary tracking-wider">
+            <span style={{ fontSize: '9px', color: '#2a3060', letterSpacing: '0.15em' }}>
               LAST RUN: {new Date(status.last_run).toLocaleTimeString('en-US', { hour12: false })}
             </span>
           )}
-          {status?.total_runtime_ms ? (
-            <span className="text-[10px] text-text-muted tracking-wider">
+          {status?.total_runtime_ms != null && (
+            <span style={{ fontSize: '9px', color: '#2a3060', letterSpacing: '0.15em' }}>
               TOTAL: {(status.total_runtime_ms / 1000).toFixed(1)}s
             </span>
-          ) : null}
+          )}
         </div>
       </div>
 
       {error ? (
-        <div className="p-5 text-red text-xs tracking-wider">
+        <div style={{ padding: '20px', fontSize: '10px', color: '#ff3b3b', letterSpacing: '0.15em' }}>
           ⚠ CANNOT REACH PIPELINE STATUS ENDPOINT — {error}
         </div>
       ) : (

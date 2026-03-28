@@ -1,4 +1,4 @@
-import type { CandidatePair, QuestionResponse, PipelineStatus, AppConfig } from './types';
+import type { CandidatePair, QuestionResponse, PipelineStatus, AppConfig, SimResult, RealismMode } from './types';
 
 const BASE = import.meta.env.VITE_API_URL ?? 'http://localhost:8000';
 
@@ -19,6 +19,19 @@ async function get<T>(path: string): Promise<T> {
   return res.json() as Promise<T>;
 }
 
+async function post<T>(path: string, body: unknown): Promise<T> {
+  const res = await fetch(`${BASE}${path}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    const b = await res.json().catch(() => ({})) as { detail?: { error?: string } };
+    throw new ApiError(res.status, b.detail?.error ?? res.statusText);
+  }
+  return res.json() as Promise<T>;
+}
+
 export const api = {
   getCandidates: (minScore = 0.70, limit = 200) =>
     get<CandidatePair[]>(`/api/candidates?min_score=${minScore}&limit=${limit}`),
@@ -28,4 +41,6 @@ export const api = {
     get<PipelineStatus>('/api/pipeline-status'),
   getConfig: () =>
     get<AppConfig>('/api/config'),
+  runSimulation: (realism_mode: RealismMode, initial_capital: number) =>
+    post<SimResult>('/api/simulation/run', { realism_mode, initial_capital }),
 };

@@ -5,6 +5,7 @@ import StatusBar from './components/StatusBar';
 import SignalsPage from './pages/SignalsPage';
 import MarketsPage from './pages/MarketsPage';
 import PipelinePage from './pages/PipelinePage';
+import SimulationPage from './pages/SimulationPage';
 import { api } from './lib/api';
 import type { AppConfig } from './lib/types';
 
@@ -32,6 +33,7 @@ export default function App() {
           <Route path="/signals" element={<SignalsPage />} />
           <Route path="/markets" element={<MarketsPage />} />
           <Route path="/pipeline" element={<PipelinePage />} />
+          <Route path="/simulation" element={<SimulationPage />} />
         </Routes>
       </main>
       <StatusBar config={config} error={configError} />

@@ -2,12 +2,22 @@
 from __future__ import annotations
 
 import os
+import sys
 from typing import Any, Dict, List, Optional
 
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
 from pymongo import MongoClient, DESCENDING
+
+# Make simulation package importable when running from backend/
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+
+from simulation.run_backtest import run_backtest
+from simulation.analytics.reports import summary_dict
+from simulation.config import SimulationConfig
+from simulation.models import RealismMode
 
 load_dotenv()
 
@@ -21,7 +31,7 @@ app = FastAPI(title="ARBX API")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://localhost:5173", "http://localhost:3000", "*"],
-    allow_methods=["GET"],
+    allow_methods=["GET", "POST"],
     allow_headers=["*"],
 )
 
@@ -121,6 +131,53 @@ def get_pipeline_status() -> Dict[str, Any]:
             "total_runtime_ms": total_runtime_ms,
             "steps": steps,
             "logs": logs[-20:],
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail={"error": str(e)})
+
+
+class SimRunRequest(BaseModel):
+    realism_mode: str = "realistic"
+    initial_capital: float = 10000.0
+
+
+@app.post("/api/simulation/run")
+def run_simulation(req: SimRunRequest) -> Dict[str, Any]:
+    try:
+        mode_map = {
+            "optimistic": RealismMode.OPTIMISTIC,
+            "realistic": RealismMode.REALISTIC,
+            "pessimistic": RealismMode.PESSIMISTIC,
+        }
+        realism = mode_map.get(req.realism_mode.lower(), RealismMode.REALISTIC)
+        config = SimulationConfig(
+            initial_capital=req.initial_capital,
+            realism_mode=realism,
+        )
+        result = run_backtest(config=config, verbose=False)
+        summary = summary_dict(result)
+        equity_curve = [
+            {"t": ts, "equity": eq}
+            for ts, eq in result.metrics.equity_curve
+        ]
+        trade_log = [
+            {
+                "market_id": f.market_id,
+                "platform": f.platform,
+                "side": f.side,
+                "price": round(f.fill_price, 4),
+                "size": round(f.fill_size, 2),
+                "status": f.status,
+                "fee": round(f.fee_paid, 4),
+                "timestamp": f.filled_at.isoformat() if f.filled_at else None,
+            }
+            for f in result.trade_log[:50]
+        ]
+        return {
+            "summary": summary,
+            "equity_curve": equity_curve,
+            "trade_log": trade_log,
+            "realism_mode": req.realism_mode,
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail={"error": str(e)})

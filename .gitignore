@@ -1,0 +1,19 @@
+# Secrets
+.env
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.egg-info/
+dist/
+build/
+.venv/
+
+# IDE
+.idea/
+.vscode/
+*.swp

@@ -214,7 +214,8 @@ def get_signals(
             docs = _diversify_signals_mmr(docs, limit=limit, diversity_lambda=diversity_lambda)
         elif len(docs) > limit:
             docs = docs[:limit]
-        # Normalise datetime fields and enums
+        # Strip internal seeder fields, normalise datetime fields and enums
+        docs = [{k: v for k, v in d.items() if not k.startswith("_")} for d in docs]
         for doc in docs:
             for k in ("created_at", "generated_at"):
                 if k in doc and hasattr(doc[k], "isoformat"):
@@ -400,7 +401,8 @@ def _build_simulation_trades(db, as_of_date: Optional[str] = None) -> List[Dict[
         end_b = mb.get("end_date")
         end_date_a = str(end_a or "")[:10] or None
         end_date_b = str(end_b or "")[:10] or None
-        exit_date = str(end_a or end_b or "")[:10]
+        # Honour seeder-assigned exit date override for realistic day-by-day spread
+        exit_date = sig.get("_exit_date_override") or str(end_a or end_b or "")[:10]
 
         # Resolve from batched market data (no extra round-trips)
         res_a = _price_to_resolution(ma) if ma else None
@@ -442,8 +444,10 @@ def _build_simulation_trades(db, as_of_date: Optional[str] = None) -> List[Dict[
         else:
             entry_date = backtest_start
 
+        # Strip internal/seeder-only fields before exposing to frontend
+        clean_sig = {k: v for k, v in sig.items() if not k.startswith("_")}
         trades.append({
-            **sig,
+            **clean_sig,
             "text_a": pair.get("text_a", ""),
             "text_b": pair.get("text_b", ""),
             "exit_date": exit_date,

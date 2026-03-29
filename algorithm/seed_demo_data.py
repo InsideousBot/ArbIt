@@ -1,245 +1,440 @@
-"""Seed MongoDB with realistic dummy data for the ArbIt demo."""
+"""
+Seed MongoDB with large-scale realistic demo data for ArbIt.
+
+Generates:
+  - 200  markets     (100 Kalshi + 100 Polymarket)
+  - 10 000 candidate_pairs   (raw pipeline output)
+  -    500 signals            (high-confidence arb opportunities)
+  -    350 validated_opportunities
+  - Price history: 60 daily snapshots per market (12 000 price points)
+  - Trades spread across a full 365-day window → real day-by-day P&L playback
+"""
 from __future__ import annotations
 
 import os
-from datetime import datetime, timedelta, timezone
+import random
+import math
+from datetime import datetime, timedelta, timezone, date as _date
+from typing import Any
 
 from dotenv import load_dotenv
-from pymongo import MongoClient
+from pymongo import MongoClient, InsertOne
 
 load_dotenv()
 
 MONGO_URI = os.getenv("DATABASE_URL") or os.getenv("MONGO_URI", "mongodb://localhost:27017")
-MONGO_DB = os.getenv("MONGO_DB") or os.getenv("MONGO_DATABASE", "arbit")
 
-END_DATE = datetime(2025, 6, 30, 16, 0, 0, tzinfo=timezone.utc)
-TODAY = datetime(2025, 6, 16, 0, 0, 0, tzinfo=timezone.utc)  # fixed "today" for demo
+# ── RNG ──────────────────────────────────────────────────────────────────────
+rng = random.Random(42)
 
-# ── Market pairs ──────────────────────────────────────────────────────────────
+# ── Date range: past 365 days aligned with system clock ──────────────────────
+TODAY = _date.today()
+YEAR_AGO = TODAY - timedelta(days=365)
 
-PAIRS = [
-    {
-        "pair_id": "demo-pair-001",
-        "kalshi": {
-            "market_id": "DEMO-K-001",
-            "question": "Will Powell say 'inflation' 40+ times at the Jun 2025 FOMC?",
-            "yes_price": 0.72,   # entry price (spread capture point)
-            "final_price": 0.95,  # resolved YES
-            "volume": 125_000,
-        },
-        "poly": {
-            "market_id": "demo-p-001",
-            "question": "Will Jerome Powell mention inflation 40+ times at June FOMC?",
-            "yes_price": 0.61,
-            "final_price": 0.95,
-            "volume": 98_000,
-        },
-        "spread": 0.11,
-        "similarity": 0.912,
-        "expected_profit": 82.50,
-        "recommended_size": 550.0,
-        "confidence": 0.91,
-    },
-    {
-        "pair_id": "demo-pair-002",
-        "kalshi": {
-            "market_id": "DEMO-K-002",
-            "question": "Will the Fed cut rates in June 2025?",
-            "yes_price": 0.55,
-            "final_price": 0.96,
-            "volume": 210_000,
-        },
-        "poly": {
-            "market_id": "demo-p-002",
-            "question": "Will the Federal Reserve lower interest rates at their June meeting?",
-            "yes_price": 0.43,
-            "final_price": 0.96,
-            "volume": 185_000,
-        },
-        "spread": 0.12,
-        "similarity": 0.945,
-        "expected_profit": 68.00,
-        "recommended_size": 500.0,
-        "confidence": 0.88,
-    },
-    {
-        "pair_id": "demo-pair-003",
-        "kalshi": {
-            "market_id": "DEMO-K-003",
-            "question": "Will Bitcoin exceed $100,000 by Jun 30, 2025?",
-            "yes_price": 0.68,
-            "final_price": 0.94,
-            "volume": 340_000,
-        },
-        "poly": {
-            "market_id": "demo-p-003",
-            "question": "Will BTC price be above $100k on June 30?",
-            "yes_price": 0.57,
-            "final_price": 0.94,
-            "volume": 290_000,
-        },
-        "spread": 0.11,
-        "similarity": 0.931,
-        "expected_profit": 55.00,
-        "recommended_size": 400.0,
-        "confidence": 0.82,
-    },
-    {
-        "pair_id": "demo-pair-004",
-        "kalshi": {
-            "market_id": "DEMO-K-004",
-            "question": "Will the S&P 500 close above 5,500 in June 2025?",
-            "yes_price": 0.81,
-            "final_price": 0.97,
-            "volume": 175_000,
-        },
-        "poly": {
-            "market_id": "demo-p-004",
-            "question": "Will SPX finish June above 5500?",
-            "yes_price": 0.73,
-            "final_price": 0.97,
-            "volume": 142_000,
-        },
-        "spread": 0.08,
-        "similarity": 0.958,
-        "expected_profit": 35.00,
-        "recommended_size": 300.0,
-        "confidence": 0.75,
-    },
+
+# ── Question templates (Kalshi phrasing → Polymarket phrasing) ───────────────
+
+QUESTION_TEMPLATES = [
+    # Macro / Fed
+    ("Will the Fed cut rates at the {month} {year} meeting?",
+     "Will the Federal Reserve lower interest rates at the {month} {year} FOMC?",
+     "kalshi", "polymarket", (0.30, 0.65)),
+    ("Will Fed funds rate be below {rate}% by end of {month} {year}?",
+     "Will the US benchmark rate fall under {rate}% before {month} ends?",
+     "kalshi", "polymarket", (0.25, 0.70)),
+    ("Will CPI exceed {pct}% YoY in {month} {year}?",
+     "Will US inflation be above {pct}% in {month}?",
+     "kalshi", "polymarket", (0.35, 0.75)),
+    ("Will Powell mention 'soft landing' at the {month} press conference?",
+     "Will Jerome Powell say 'soft landing' during the {month} FOMC presser?",
+     "kalshi", "polymarket", (0.40, 0.72)),
+    ("Will the 10-year Treasury yield exceed {rate}% in {month} {year}?",
+     "Will 10Y US yields break above {rate}% during {month}?",
+     "kalshi", "polymarket", (0.45, 0.78)),
+    # Crypto
+    ("Will Bitcoin exceed ${price}k by end of {month} {year}?",
+     "Will BTC price surpass ${price},000 before {month} closes?",
+     "kalshi", "polymarket", (0.30, 0.70)),
+    ("Will Ethereum exceed ${price}k in {month} {year}?",
+     "Will ETH break ${price}k in {month}?",
+     "kalshi", "polymarket", (0.35, 0.68)),
+    ("Will Bitcoin market cap exceed {cap}T by {month} {year}?",
+     "Will BTC market cap top ${cap} trillion in {month}?",
+     "kalshi", "polymarket", (0.28, 0.62)),
+    ("Will Solana exceed ${price} in {month} {year}?",
+     "Will SOL price be above ${price} in {month}?",
+     "kalshi", "polymarket", (0.32, 0.71)),
+    ("Will a spot Bitcoin ETF see >$1B inflows in {month} {year}?",
+     "Will BTC ETFs attract over $1 billion in {month}?",
+     "kalshi", "polymarket", (0.55, 0.80)),
+    # Equities
+    ("Will the S&P 500 close above {level} in {month} {year}?",
+     "Will SPX finish {month} above {level}?",
+     "kalshi", "polymarket", (0.40, 0.82)),
+    ("Will the Nasdaq exceed {level} by end of {month} {year}?",
+     "Will the Nasdaq 100 be above {level} in {month}?",
+     "kalshi", "polymarket", (0.38, 0.76)),
+    ("Will the Dow Jones close above {level} in {month} {year}?",
+     "Will DJIA stay above {level} at {month} end?",
+     "kalshi", "polymarket", (0.42, 0.80)),
+    ("Will VIX fall below {level} in {month} {year}?",
+     "Will the volatility index drop under {level} during {month}?",
+     "kalshi", "polymarket", (0.35, 0.70)),
+    ("Will {ticker} stock exceed ${price} in {month} {year}?",
+     "Will {ticker} share price break ${price} in {month}?",
+     "kalshi", "polymarket", (0.30, 0.68)),
+    # Geopolitics / elections
+    ("Will {country} hold elections before end of {year}?",
+     "Will {country} conduct national elections in {year}?",
+     "kalshi", "polymarket", (0.50, 0.85)),
+    ("Will the US impose new tariffs on {country} in {month} {year}?",
+     "Will the US add tariffs targeting {country} during {month}?",
+     "kalshi", "polymarket", (0.25, 0.60)),
+    ("Will a ceasefire be announced in {region} by {month} {year}?",
+     "Will fighting in {region} pause under a ceasefire deal in {month}?",
+     "kalshi", "polymarket", (0.20, 0.55)),
+    # Tech / AI
+    ("Will OpenAI release a new major model in {month} {year}?",
+     "Will OpenAI launch a new flagship model during {month}?",
+     "kalshi", "polymarket", (0.45, 0.75)),
+    ("Will {company} stock gain over 10% in {month} {year}?",
+     "Will {company} shares rise more than 10% in {month}?",
+     "kalshi", "polymarket", (0.22, 0.55)),
+    ("Will the EU pass new AI regulation in {month} {year}?",
+     "Will the European Union enact AI legislation during {month}?",
+     "kalshi", "polymarket", (0.18, 0.50)),
+    # Sports
+    ("Will {team} win the {league} championship in {year}?",
+     "Will {team} be crowned {league} champions in {year}?",
+     "kalshi", "polymarket", (0.15, 0.45)),
+    ("Will {athlete} win the {tournament} in {year}?",
+     "Will {athlete} claim victory at the {tournament} this year?",
+     "kalshi", "polymarket", (0.20, 0.55)),
+    # Commodities
+    ("Will oil prices exceed ${price}/barrel in {month} {year}?",
+     "Will WTI crude oil surpass ${price} per barrel in {month}?",
+     "kalshi", "polymarket", (0.35, 0.70)),
+    ("Will gold exceed ${price}/oz by {month} {year}?",
+     "Will gold price break ${price} per ounce during {month}?",
+     "kalshi", "polymarket", (0.40, 0.75)),
+    # Weather / climate
+    ("Will a major hurricane hit the US Gulf Coast in {year}?",
+     "Will there be a Gulf Coast hurricane landfall in {year}?",
+     "kalshi", "polymarket", (0.45, 0.72)),
+    # Corporate
+    ("Will {company} report earnings above analyst estimates in Q{quarter} {year}?",
+     "Will {company} beat EPS consensus in Q{quarter} {year}?",
+     "kalshi", "polymarket", (0.52, 0.78)),
+    ("Will {company} announce a stock buyback in {month} {year}?",
+     "Will {company} launch a share repurchase program in {month}?",
+     "kalshi", "polymarket", (0.30, 0.62)),
+    ("Will {company} announce layoffs exceeding 5% of staff in {year}?",
+     "Will {company} cut more than 5% of employees in {year}?",
+     "kalshi", "polymarket", (0.28, 0.60)),
+    # Housing
+    ("Will US 30-year mortgage rates fall below {rate}% in {month} {year}?",
+     "Will 30Y mortgage rates dip under {rate}% during {month}?",
+     "kalshi", "polymarket", (0.32, 0.65)),
+    ("Will US existing home sales exceed {num}M units in {month} {year}?",
+     "Will monthly US home sales top {num} million in {month}?",
+     "kalshi", "polymarket", (0.38, 0.70)),
 ]
 
+MONTHS = ["January","February","March","April","May","June","July","August","September","October","November","December"]
+YEARS  = [2024, 2025]
+TICKERS = ["AAPL","NVDA","TSLA","MSFT","AMZN","GOOGL","META","AMD","NFLX","PLTR"]
+COMPANIES = ["Apple","Nvidia","Tesla","Microsoft","Amazon","Google","Meta","AMD","Netflix","Palantir","OpenAI","Anthropic"]
+TEAMS = ["Kansas City Chiefs","Golden State Warriors","LA Dodgers","Real Madrid","Manchester City","Boston Celtics","Miami Heat"]
+ATHLETES = ["Novak Djokovic","Carlos Alcaraz","Iga Swiatek","LeBron James","Tiger Woods","Serena Williams"]
+TOURNAMENTS = ["US Open","Wimbledon","French Open","Masters","NBA Finals","World Series"]
+LEAGUES = ["NFL","NBA","MLB","Premier League","Champions League","NHL"]
+COUNTRIES = ["Japan","Germany","France","India","Brazil","Canada","South Korea","UK","Australia"]
+REGIONS = ["Ukraine","Gaza","Sudan","Yemen","Taiwan Strait"]
 
-def _build_price_history(start_price: float, end_price: float, days: int = 14) -> list:
-    """Generate daily price snapshots converging from start_price to end_price."""
-    history = []
-    base = TODAY - timedelta(days=days)
+
+def _fill(template: str) -> str:
+    """Fill template placeholders with random realistic values."""
+    t = template
+    replacements = {
+        "{month}":    rng.choice(MONTHS),
+        "{year}":     str(rng.choice(YEARS)),
+        "{quarter}":  str(rng.randint(1, 4)),
+        "{rate}":     str(round(rng.uniform(3.5, 7.5), 1)),
+        "{pct}":      str(round(rng.uniform(2.0, 5.5), 1)),
+        "{price}":    str(rng.choice([50, 75, 80, 90, 100, 110, 120, 150, 200, 250, 300])),
+        "{cap}":      str(rng.choice([1, 2, 3])),
+        "{level}":    str(rng.choice([4000, 4200, 4500, 4800, 5000, 5200, 5500, 5800, 6000,
+                                      14000, 15000, 16000, 17000, 18000,
+                                      33000, 35000, 38000, 40000])),
+        "{ticker}":   rng.choice(TICKERS),
+        "{company}":  rng.choice(COMPANIES),
+        "{country}":  rng.choice(COUNTRIES),
+        "{region}":   rng.choice(REGIONS),
+        "{team}":     rng.choice(TEAMS),
+        "{athlete}":  rng.choice(ATHLETES),
+        "{tournament}": rng.choice(TOURNAMENTS),
+        "{league}":   rng.choice(LEAGUES),
+        "{num}":      str(round(rng.uniform(3.5, 6.5), 1)),
+    }
+    for k, v in replacements.items():
+        t = t.replace(k, v, 1)
+    return t
+
+
+def _rand_spread() -> float:
+    """Realistic arb spread: mostly 4–14pp, occasional 3pp or 18pp."""
+    return round(rng.triangular(0.03, 0.18, 0.08), 3)
+
+
+def _rand_end_date() -> _date:
+    """Random market end date uniformly spread across the past 365-day backtest window."""
+    offset = rng.randint(0, 364)
+    return YEAR_AGO + timedelta(days=offset)
+
+
+def _build_price_history(start_price: float, final_price: float, days: int = 60) -> list:
+    """Smooth stochastic convergence from start to final over `days` daily bars.
+    Returns list of dicts with 'yes_price' key (required by backend _price_to_resolution).
+    """
+    entries = []
+    p = start_price
+    target = final_price
     for i in range(days):
         frac = i / max(days - 1, 1)
-        price = round(start_price + (end_price - start_price) * frac, 4)
-        history.append({
-            "date": (base + timedelta(days=i)).isoformat(),
-            "yes_price": price,
-            "no_price": round(1 - price, 4),
-        })
-    return history
+        drift = (target - p) * (0.07 + frac * 0.15)
+        noise = rng.gauss(0, 0.008) * (1 - frac * 0.6)
+        p = max(0.01, min(0.99, p + drift + noise))
+        entries.append({"yes_price": round(p, 4)})
+    # Force final value
+    entries[-1]["yes_price"] = round(final_price, 4)
+    return entries
 
+
+def _price_resolves_yes(p: float) -> bool:
+    return p >= 0.80
+
+
+def _outcome(res_a: str | None, res_b: str | None) -> tuple[str, float | None]:
+    if res_a == res_b and res_a is not None:
+        return "WIN", None   # actual pnl computed separately
+    if res_a is None or res_b is None:
+        return "UNKNOWN", None
+    return "UNKNOWN", None   # different resolutions → not true arb
+
+
+# ── Main seeder ───────────────────────────────────────────────────────────────
 
 def seed(db) -> None:
-    markets_col = db["markets"]
-    pairs_col = db["candidate_pairs"]
-    signals_col = db["signals"]
-    validated_col = db["validated_opportunities"]
+    print("Clearing old demo data…")
+    db["markets"].delete_many({"_demo": True})
+    db["candidate_pairs"].delete_many({"_demo": True})
+    db["signals"].delete_many({"_demo": True})
+    db["validated_opportunities"].delete_many({"_demo": True})
 
-    # Clear demo documents
-    for col in (markets_col, pairs_col, signals_col, validated_col):
-        col.delete_many({"market_id": {"$regex": "^DEMO-"}} if col.name == "markets"
-                        else {"pair_id": {"$regex": "^demo-pair-"}} if col.name in ("signals", "validated_opportunities")
-                        else {"id": {"$regex": "^demo-pair-"}})
+    # ── 1. Generate 200 markets (100 Kalshi + 100 Polymarket) ─────────────────
+    print("Generating markets…")
+    market_docs: list[dict[str, Any]] = []
+    market_lookup: dict[str, dict] = {}  # market_id → doc
 
-    for p in PAIRS:
-        k = p["kalshi"]
-        poly = p["poly"]
+    pair_topics: list[dict] = []   # holds matched (k_id, p_id, end_date, k_final, p_final, spread)
 
-        # Kalshi market doc — price_history converges to final_price (>= 0.8 → resolves YES)
-        markets_col.replace_one(
-            {"market_id": k["market_id"]},
-            {
-                "platform": "kalshi",
-                "market_id": k["market_id"],
-                "question": k["question"],
-                "yes_price": k["final_price"],
-                "no_price": round(1 - k["final_price"], 4),
-                "end_date": END_DATE,
-                "volume": k["volume"],
-                "price_history": _build_price_history(k["yes_price"], k["final_price"]),
-            },
-            upsert=True,
-        )
+    for i in range(100):
+        tpl = QUESTION_TEMPLATES[i % len(QUESTION_TEMPLATES)]
+        q_k = _fill(tpl[0])
+        q_p = _fill(tpl[1])
+        end_date = _rand_end_date()
+        spread = _rand_spread()
+        lo, hi = tpl[4]
+        base_price = round(rng.uniform(lo, hi), 3)
+        # Both markets resolve the same way with 78% probability
+        resolves_yes = rng.random() < 0.78
+        k_final = round(rng.uniform(0.91, 0.98), 3) if resolves_yes else round(rng.uniform(0.02, 0.09), 3)
+        p_final = round(k_final + rng.gauss(0, 0.01), 3)
+        p_final = max(0.01, min(0.99, p_final))
 
-        # Polymarket market doc — converges to same final_price
-        markets_col.replace_one(
-            {"market_id": poly["market_id"]},
-            {
-                "platform": "polymarket",
-                "market_id": poly["market_id"],
-                "question": poly["question"],
-                "yes_price": poly["final_price"],
-                "no_price": round(1 - poly["final_price"], 4),
-                "end_date": END_DATE,
-                "volume": poly["volume"],
-                "price_history": _build_price_history(poly["yes_price"], poly["final_price"]),
-            },
-            upsert=True,
-        )
+        k_id = f"DEMO-K-{i+1:04d}"
+        p_id = f"demo-p-{i+1:04d}"
+        k_start = base_price
+        p_start = max(0.01, min(0.99, base_price - spread))
 
-        # Candidate pair doc
-        pairs_col.replace_one(
-            {"id": p["pair_id"]},
-            {
-                "id": p["pair_id"],
-                "text_a": k["question"],
-                "text_b": poly["question"],
-                "market_a": "kalshi",
-                "market_b": "polymarket",
-                "market_a_id": k["market_id"],
-                "market_b_id": poly["market_id"],
-                "price_a": k["yes_price"],
-                "price_b": poly["yes_price"],
-                "price_spread": p["spread"],
-                "similarity_score": p["similarity"],
-            },
-            upsert=True,
-        )
+        days_until_end = max(7, (end_date - YEAR_AGO).days)
+        ph_days = min(60, days_until_end)
 
-        # Signal doc
-        signal_doc = {
-            "pair_id": p["pair_id"],
-            "market_a_id": k["market_id"],
-            "market_b_id": poly["market_id"],
-            "platform_a": "kalshi",
-            "platform_b": "polymarket",
-            "price_a": k["yes_price"],
-            "price_b": poly["yes_price"],
-            "direction": "buy_b_sell_a",
-            "raw_spread": p["spread"],
-            "expected_profit": p["expected_profit"],
-            "recommended_size_usd": p["recommended_size"],
-            "confidence": p["confidence"],
-            "generated_at": TODAY.isoformat(),
+        k_doc = {
+            "_demo": True,
+            "platform": "kalshi",
+            "market_id": k_id,
+            "question": q_k,
+            "yes_price": k_final,
+            "no_price": round(1 - k_final, 4),
+            "end_date": datetime(end_date.year, end_date.month, end_date.day, 16, 0, 0, tzinfo=timezone.utc),
+            "volume": rng.randint(40_000, 500_000),
+            "price_history": _build_price_history(k_start, k_final, ph_days),
         }
-        signals_col.replace_one({"pair_id": p["pair_id"]}, signal_doc, upsert=True)
+        p_doc = {
+            "_demo": True,
+            "platform": "polymarket",
+            "market_id": p_id,
+            "question": q_p,
+            "yes_price": p_final,
+            "no_price": round(1 - p_final, 4),
+            "end_date": datetime(end_date.year, end_date.month, end_date.day, 16, 0, 0, tzinfo=timezone.utc),
+            "volume": rng.randint(30_000, 400_000),
+            "price_history": _build_price_history(p_start, p_final, ph_days),
+        }
+        market_docs.append(k_doc)
+        market_docs.append(p_doc)
+        market_lookup[k_id] = k_doc
+        market_lookup[p_id] = p_doc
+        pair_topics.append({
+            "k_id": k_id, "p_id": p_id,
+            "q_k": q_k, "q_p": q_p,
+            "end_date": end_date,
+            "k_start": k_start, "p_start": p_start,
+            "k_final": k_final, "p_final": p_final,
+            "spread": spread, "base_price": base_price,
+        })
 
-        # Validated opportunity doc
-        validated_col.replace_one(
-            {"pair_id": p["pair_id"]},
-            {
-                "pair_id": p["pair_id"],
-                "executable": True,
-                "signal": signal_doc,
-                "validation_notes": "Spread confirmed liquid on both legs. EV positive.",
-                "validated_at": TODAY.isoformat(),
-            },
-            upsert=True,
-        )
+    if market_docs:
+        db["markets"].insert_many(market_docs)
+    print(f"  Inserted {len(market_docs)} markets")
 
-    print(f"Seeded {len(PAIRS)} market pairs into '{MONGO_DB}':")
-    print(f"  markets              : {markets_col.count_documents({})}")
-    print(f"  candidate_pairs      : {pairs_col.count_documents({})}")
-    print(f"  signals              : {signals_col.count_documents({})}")
-    print(f"  validated_opportunities: {validated_col.count_documents({})}")
+    # ── 2. Generate 10 000 candidate_pairs ────────────────────────────────────
+    print("Generating 10 000 candidate pairs…")
+    candidate_docs: list[dict] = []
+    # First 100 are the real matched pairs (high similarity)
+    for i, pt in enumerate(pair_topics):
+        candidate_docs.append({
+            "_demo": True,
+            "id": f"demo-pair-{i+1:05d}",
+            "text_a": pt["q_k"],
+            "text_b": pt["q_p"],
+            "market_a": "kalshi",
+            "market_b": "polymarket",
+            "market_a_id": pt["k_id"],
+            "market_b_id": pt["p_id"],
+            "price_a": pt["k_start"],
+            "price_b": pt["p_start"],
+            "price_spread": pt["spread"],
+            "similarity_score": round(rng.uniform(0.82, 0.97), 4),
+        })
+
+    # Remaining ~9900: cross-pair near-misses with lower similarity
+    for j in range(9900):
+        tp_a = rng.choice(QUESTION_TEMPLATES)
+        tp_b = rng.choice(QUESTION_TEMPLATES)
+        sim = round(rng.triangular(0.55, 0.82, 0.65), 4)
+        spread = round(rng.uniform(0.01, 0.22), 3)
+        base = round(rng.uniform(0.25, 0.75), 3)
+        candidate_docs.append({
+            "_demo": True,
+            "id": f"demo-near-{j+1:06d}",
+            "text_a": _fill(tp_a[0]),
+            "text_b": _fill(tp_b[1]),
+            "market_a": rng.choice(["kalshi", "manifold"]),
+            "market_b": rng.choice(["polymarket", "manifold"]),
+            "market_a_id": f"NEAR-K-{j+1:06d}",
+            "market_b_id": f"near-p-{j+1:06d}",
+            "price_a": base,
+            "price_b": round(base - spread, 3),
+            "price_spread": spread,
+            "similarity_score": sim,
+        })
+
+    # Bulk insert in chunks of 1000
+    for chunk_start in range(0, len(candidate_docs), 1000):
+        db["candidate_pairs"].insert_many(candidate_docs[chunk_start:chunk_start + 1000])
+    print(f"  Inserted {len(candidate_docs)} candidate pairs")
+
+    # ── 3. Generate 500 signals (one per matched pair, spread across exit dates) ─
+    print("Generating 500 signals…")
+    signal_docs: list[dict] = []
+    for i, pt in enumerate(pair_topics):
+        # Stagger exit dates: spread the 100 matched pairs across the year
+        # then duplicate each ~5× with slightly varied parameters to hit 500
+        for variant in range(5):
+            # Vary price/spread slightly per variant
+            var_spread = round(max(0.02, pt["spread"] + rng.gauss(0, 0.012)), 3)
+            var_price_a = round(max(0.05, min(0.95, pt["k_start"] + rng.gauss(0, 0.03))), 3)
+            var_price_b = round(max(0.05, min(0.95, pt["p_start"] + rng.gauss(0, 0.03))), 3)
+            # Stagger exit dates evenly
+            day_offset = ((i * 5 + variant) * 365 // 500) % 365
+            exit_date = (YEAR_AGO + timedelta(days=day_offset + rng.randint(0, 3))).isoformat()
+            size = round(rng.triangular(100, 800, 350), 0)
+            ev = round(var_spread * size * rng.uniform(0.85, 1.05), 2)
+            conf = round(rng.triangular(0.62, 0.96, 0.82), 3)
+            pair_id = f"demo-pair-{i+1:05d}" if variant == 0 else f"demo-near-{(i*5+variant):06d}"
+            # Always reference the real market ids for trade enrichment
+            sig_id = f"sig-{i+1:04d}-v{variant}"
+            signal_docs.append({
+                "_demo": True,
+                "signal_id": sig_id,
+                "pair_id": candidate_docs[i]["id"],
+                "market_a_id": pt["k_id"],
+                "market_b_id": pt["p_id"],
+                "platform_a": "kalshi",
+                "platform_b": "polymarket",
+                "price_a": var_price_a,
+                "price_b": var_price_b,
+                "direction": "buy_b_sell_a",
+                "raw_spread": var_spread,
+                "expected_profit": ev,
+                "recommended_size_usd": size,
+                "confidence": conf,
+                "kelly_fraction": round(conf * var_spread * 2, 4),
+                "regression_convergence_prob": round(rng.uniform(0.60, 0.92), 3),
+                "generated_at": (YEAR_AGO + timedelta(days=day_offset)).isoformat(),
+                # Store exit_date directly so backend can use it for simulation
+                "_exit_date_override": exit_date,
+            })
+
+    for chunk_start in range(0, len(signal_docs), 500):
+        db["signals"].insert_many(signal_docs[chunk_start:chunk_start + 500])
+    print(f"  Inserted {len(signal_docs)} signals")
+
+    # ── 4. Generate 350 validated opportunities ────────────────────────────────
+    print("Generating validated opportunities…")
+    validated_docs: list[dict] = []
+    for sig in rng.sample(signal_docs, min(350, len(signal_docs))):
+        validated_docs.append({
+            "_demo": True,
+            "pair_id": sig["pair_id"],
+            "signal_id": sig.get("signal_id"),
+            "executable": rng.random() < 0.88,
+            "signal": {k: v for k, v in sig.items() if not k.startswith("_")},
+            "validation_notes": rng.choice([
+                "Spread confirmed liquid on both legs. EV positive.",
+                "Both markets within 2% of mid. Entering at current prices.",
+                "High-confidence convergence signal. Size approved.",
+                "Timing risk low. Market closes within 14 days.",
+                "Kelly fraction within risk limits. Trade approved.",
+            ]),
+            "validated_at": sig["generated_at"],
+        })
+    db["validated_opportunities"].insert_many(validated_docs)
+    print(f"  Inserted {len(validated_docs)} validated opportunities")
+
+    # ── Summary ───────────────────────────────────────────────────────────────
+    print("\nSeed complete:")
+    print(f"  markets                : {db['markets'].count_documents({'_demo': True})}")
+    print(f"  candidate_pairs        : {db['candidate_pairs'].count_documents({'_demo': True})}")
+    print(f"  signals                : {db['signals'].count_documents({'_demo': True})}")
+    print(f"  validated_opportunities: {db['validated_opportunities'].count_documents({'_demo': True})}")
 
 
 if __name__ == "__main__":
-    client = MongoClient(MONGO_URI, serverSelectionTimeoutMS=5000)
-    # Auto-discover or use env DB
-    preferred = ["arbit", "Arbit", "prediction_markets", "arbsignal"]
-    available = set(client.list_database_names())
-    db_name = MONGO_DB
-    if db_name not in available:
-        for name in preferred:
-            if name in available:
-                db_name = name
-                break
-    print(f"Using MongoDB database: {db_name}")
+    client = MongoClient(MONGO_URI, serverSelectionTimeoutMS=10000)
+    # Auto-discover DB
+    preferred = ["prediction_markets", "arbit", "Arbit", "arbsignal"]
+    try:
+        available = set(client.list_database_names())
+    except Exception:
+        available = set()
+    db_name = os.getenv("MONGO_DB") or os.getenv("MONGO_DATABASE") or "prediction_markets"
+    for name in preferred:
+        if name in available:
+            db_name = name
+            break
+    print(f"Using MongoDB database: '{db_name}'")
     seed(client[db_name])
     client.close()

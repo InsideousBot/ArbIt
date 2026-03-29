@@ -131,8 +131,7 @@ def check_contradictions(
                 flags.append(
                     f"threshold_mismatch: {t_a} vs {t_b} ({ratio:.1%} difference)"
                 )
-                hard_reject = True
-                max_confidence = max(max_confidence, 0.88)
+                # soft flag only — LLM decides; unit differences can cause false positives
 
     # ------------------------------------------------------------------
     # 5. Nomination vs general election mismatch

@@ -67,35 +67,52 @@ def _markets_doc_to_question(doc: dict):
 
 
 def _load_questions_from_markets(db, platforms: list[str], limit: int, keyword: Optional[str] = None):
-    """Load MarketQuestion objects from the markets collection."""
+    """Load MarketQuestion objects from the markets collection.
+
+    Loads up to `limit` questions PER PLATFORM so that every platform is
+    represented equally in the candidate matrix.  Without this guarantee a
+    single-query approach returns all documents from the first platform in
+    insertion order, leaving cross-market similarity matrix with only one side.
+    """
     col = db["markets"]
     base_query: dict = {}
-    if platforms:
-        base_query["platform"] = {"$in": platforms}
     if keyword:
         base_query["question"] = {"$regex": keyword, "$options": "i"}
 
-    # Load with existing vectors first
-    with_vectors = [
-        _markets_doc_to_question(d)
-        for d in col.find(
-            {**base_query, "vector": {"$exists": True}},
-            {"price_history": 0}
-        ).limit(limit * max(len(platforms), 1))
-    ]
+    active_platforms = platforms or _get_platforms(col)
+    with_vectors: list = []
+    without_vectors: list = []
 
-    # Load without vectors (up to limit per platform)
-    without_vectors = []
-    for plat in (platforms or _get_platforms(col)):
-        plat_query = {**base_query, "platform": plat, "vector": {"$exists": False}}
-        docs = list(col.find(plat_query, {"price_history": 0}).limit(limit))
-        without_vectors.extend(_markets_doc_to_question(d) for d in docs)
+    for plat in active_platforms:
+        plat_query = {**base_query, "platform": plat}
+
+        # Prefer pre-embedded questions (avoids re-embedding cost)
+        plat_with = [
+            _markets_doc_to_question(d)
+            for d in col.find(
+                {**plat_query, "vector": {"$exists": True}},
+                {"price_history": 0},
+            ).limit(limit)
+        ]
+        with_vectors.extend(plat_with)
+
+        # Fill remaining slots with un-embedded questions
+        remaining = max(0, limit - len(plat_with))
+        if remaining > 0:
+            docs = list(
+                col.find(
+                    {**plat_query, "vector": {"$exists": False}},
+                    {"price_history": 0},
+                ).limit(remaining)
+            )
+            without_vectors.extend(_markets_doc_to_question(d) for d in docs)
 
     log.info(
-        "Loaded %d questions (%d pre-embedded, %d new)%s",
+        "Loaded %d questions (%d pre-embedded, %d new) across %d platforms%s",
         len(with_vectors) + len(without_vectors),
         len(with_vectors),
         len(without_vectors),
+        len(active_platforms),
         f" [keyword={keyword!r}]" if keyword else "",
     )
     return with_vectors, without_vectors
@@ -153,11 +170,9 @@ def _run_phase3_no_llm(candidates, similarity_threshold: float = 0.80):
     Decision logic (in order):
       1. REJECT if templates are structurally incompatible (e.g. range-bucket vs binary-winner)
       2. REJECT if entities clearly differ (entity mismatch flag)
-      3. ACCEPT if embedding_similarity >= similarity_threshold
-      4. REJECT otherwise
-
-    Date/threshold contradictions are intentionally skipped — the LLM normally
-    resolves those, and in no-LLM mode we defer to the embedding similarity.
+      3. REJECT if market close dates are too far apart (date_gap_exceeded)
+      4. ACCEPT if embedding_similarity >= similarity_threshold
+      5. REJECT otherwise
     """
     from algorithm.Phase_3.adapters import phase2_candidate_to_canonical
     from algorithm.Phase_3.classifier import classify_pair
@@ -184,16 +199,14 @@ def _run_phase3_no_llm(candidates, similarity_threshold: float = 0.80):
             features_b = extract_features(market_b)
             contradiction = check_contradictions(features_a, features_b, template_a, template_b)
 
-            # Only hard-reject on entity mismatch or incompatible templates
-            # (not on date/threshold — those need LLM context to resolve)
             structural_reject = any(
-                "entity_mismatch" in f or "incompatible_templates" in f
+                "entity_mismatch" in f or "incompatible_templates" in f or "date_gap_exceeded" in f
                 for f in contradiction.flags
             )
 
             if structural_reject:
                 verdict = Verdict.REJECT
-                reason = f"Structural contradiction: {'; '.join(f for f in contradiction.flags if 'entity_mismatch' in f or 'incompatible_templates' in f)}"
+                reason = f"Structural contradiction: {'; '.join(f for f in contradiction.flags if 'entity_mismatch' in f or 'incompatible_templates' in f or 'date_gap_exceeded' in f)}"
                 confidence = 0.0
             elif embedding_sim >= similarity_threshold:
                 verdict = Verdict.ACCEPT

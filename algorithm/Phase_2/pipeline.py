@@ -45,6 +45,7 @@ class ArbitragePipeline:
         self,
         embedder: Optional[Embedder] = None,
         similarity_threshold: float = 0.85,
+        date_tolerance_days: int = 90,
     ) -> None:
         """
         Args:
@@ -53,11 +54,13 @@ class ArbitragePipeline:
             similarity_threshold: Minimum cosine similarity for a pair to be considered
                                   a candidate [0.0, 1.0]. Every pair above this is returned.
                                   Benchmark result: 0.70 gives F1=0.926 across 6 sectors.
+            date_tolerance_days: Max allowed gap (days) between market close dates.
         """
         self._embedder = embedder or TransformerEmbedder()
         self._finder = CandidateFinder(
             embedder=self._embedder,
             similarity_threshold=similarity_threshold,
+            date_tolerance_days=date_tolerance_days,
         )
 
     @property

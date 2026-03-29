@@ -343,9 +343,18 @@ def get_pipeline_status() -> Dict[str, Any]:
 # ── Simulation (historical backtest) ─────────────────────────────────────────
 
 def _price_to_resolution(doc: Dict[str, Any]) -> Optional[str]:
-    """Derive YES/NO resolution from last price_history entry or current yes_price."""
+    """Derive YES/NO resolution from most-recent price_history entry or current yes_price.
+
+    price_history ordering differs by platform (Kalshi=ASC oldest→newest,
+    Manifold=DESC newest→oldest), so we pick the entry with the largest timestamp.
+    """
     ph = doc.get("price_history") or []
-    last_price = ph[-1].get("yes_price") if ph else doc.get("yes_price")
+    if ph:
+        # Pick the entry with the highest timestamp regardless of array order
+        most_recent = max(ph, key=lambda p: p.get("timestamp", 0))
+        last_price = most_recent.get("yes_price")
+    else:
+        last_price = doc.get("yes_price")
     if last_price is None:
         return None
     if last_price >= 0.8:
@@ -374,7 +383,10 @@ def _build_simulation_trades(db, as_of_date: Optional[str] = None) -> List[Dict[
         d["market_id"]: d
         for d in db["markets"].find(
             {"market_id": {"$in": list(market_ids)}},
-            {"market_id": 1, "end_date": 1, "price_history": {"$slice": -1}, "yes_price": 1, "_id": 0},
+            # Fetch last 2 entries so _price_to_resolution can check the most-recent price.
+            # price_history order varies by platform (Kalshi=ASC, Manifold=DESC), so we
+            # sort explicitly in _price_to_resolution instead of relying on array order.
+            {"market_id": 1, "end_date": 1, "price_history": {"$slice": -2}, "yes_price": 1, "platform": 1, "_id": 0},
         )
     }
 
@@ -420,7 +432,6 @@ def _build_simulation_trades(db, as_of_date: Optional[str] = None) -> List[Dict[
                 outcome = "WIN"
                 realized_pnl = round(raw_spread * size, 2)
             else:
-                outcome = "LOSS"
                 if direction == "buy_b_sell_a":
                     pnl_b = (1.0 - price_b) if res_b == "YES" else -price_b
                     pnl_a = price_a if res_a == "NO" else -(1.0 - price_a)
@@ -428,6 +439,7 @@ def _build_simulation_trades(db, as_of_date: Optional[str] = None) -> List[Dict[
                     pnl_a = (1.0 - price_a) if res_a == "YES" else -price_a
                     pnl_b = price_b if res_b == "NO" else -(1.0 - price_b)
                 realized_pnl = round((pnl_a + pnl_b) * size, 2)
+                outcome = "WIN" if realized_pnl >= 0 else "LOSS"
 
         # Normalise datetimes/enums
         for k in ("created_at", "generated_at"):

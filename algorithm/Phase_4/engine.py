@@ -266,7 +266,10 @@ class ArbitrageEngine:
 
         weak_match_penalty = (1.0 - max(0.0, min(1.0, similarity))) * raw_spread * 0.75
         risk = base + weak_match_penalty
-        return round(max(raw_spread * 0.25, min(risk, raw_spread * 1.50)), 6)
+        # For a two-sided binary hedge, the true worst-case loss when markets diverge
+        # is (1 - spread), not 1.5 * spread. Cap at the real binary loss floor.
+        binary_worst_case = max(1.0 - raw_spread, raw_spread * 0.25)
+        return round(min(risk, binary_worst_case), 6)
 
     @staticmethod
     def _compute_confidence(

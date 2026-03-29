@@ -8,6 +8,7 @@ interface TabBarProps {
 export default function TabBar({ candidateCount, isLive }: TabBarProps) {
   const tabs = [
     { label: 'SIGNALS', to: '/signals' },
+    { label: 'SIMULATION', to: '/simulation' },
     { label: 'MARKETS', to: '/markets' },
     { label: 'PIPELINE', to: '/pipeline' },
   ];

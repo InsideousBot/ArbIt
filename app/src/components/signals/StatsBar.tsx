@@ -1,9 +1,12 @@
-import type { CandidatePair } from '../../lib/types';
+import type { SignalsStats } from '../../lib/types';
+
+export type SignalsRankingMode = 'profit' | 'diverse';
 
 interface StatsBarProps {
-  candidates: CandidatePair[];
-  lastRun: string | null;
+  stats: SignalsStats | null;
   loading: boolean;
+  ranking?: SignalsRankingMode;
+  onRankingChange?: (mode: SignalsRankingMode) => void;
 }
 
 function Stat({ label, value, color }: { label: string; value: string; color: string }) {
@@ -15,36 +18,86 @@ function Stat({ label, value, color }: { label: string; value: string; color: st
   );
 }
 
-export default function StatsBar({ candidates, lastRun, loading }: StatsBarProps) {
+export default function StatsBar({ stats, loading, ranking, onRankingChange }: StatsBarProps) {
   const dash = '--';
-  const count = candidates.length;
-  const highConf = candidates.filter((c) => c.similarity_score >= 0.90).length;
-  const negCount = candidates.filter((c) => c.has_potential_negation).length;
-  const topScore = count > 0 ? Math.max(...candidates.map((c) => c.similarity_score)).toFixed(3) : dash;
-  const bestSpread =
-    count > 0
-      ? `${Math.round(Math.max(...candidates.map((c) => c.price_spread)) * 100)}pp`
-      : dash;
-  const lastRunFormatted = lastRun
-    ? new Date(lastRun).toLocaleTimeString('en-US', { hour12: false })
-    : dash;
 
   if (loading) {
     return (
-      <div className="flex items-center h-10 px-4 border-b border-border bg-surface shrink-0">
+      <div className="flex items-center justify-between h-10 px-4 border-b border-border bg-surface shrink-0 gap-2">
         <span className="text-text-muted text-xs tracking-widest animate-pulse">LOADING...</span>
+        {onRankingChange && ranking !== undefined && (
+          <div className="flex items-center gap-1 shrink-0">
+            <span className="text-[10px] text-text-muted tracking-widest hidden sm:inline">RANK</span>
+            <div className="flex rounded border border-border overflow-hidden text-[10px]">
+              <button
+                type="button"
+                onClick={() => onRankingChange('profit')}
+                className={`px-2 py-1 tracking-wide ${
+                  ranking === 'profit' ? 'bg-orange/20 text-orange' : 'text-text-muted'
+                }`}
+              >
+                Best EV
+              </button>
+              <button
+                type="button"
+                onClick={() => onRankingChange('diverse')}
+                className={`px-2 py-1 tracking-wide border-l border-border ${
+                  ranking === 'diverse' ? 'bg-orange/20 text-orange' : 'text-text-muted'
+                }`}
+              >
+                Diverse
+              </button>
+            </div>
+          </div>
+        )}
       </div>
     );
   }
 
+  const total = stats?.total ?? 0;
+  const totalEv = stats ? `$${stats.total_ev.toFixed(0)}` : dash;
+  const topEv = stats ? `$${stats.top_ev.toFixed(2)}` : dash;
+  const avgConf = stats ? `${(stats.avg_confidence * 100).toFixed(1)}%` : dash;
+  const avgSpread = stats ? `${(stats.avg_spread * 100).toFixed(1)}pp` : dash;
+
   return (
     <div className="flex items-stretch h-10 border-b border-border bg-surface shrink-0">
-      <Stat label="CANDIDATES" value={String(count)} color="text-orange" />
-      <Stat label="HIGH CONF ≥0.90" value={String(highConf)} color="text-green" />
-      <Stat label="NEGATION ▲" value={String(negCount)} color="text-red" />
-      <Stat label="TOP SCORE" value={topScore} color="text-orange" />
-      <Stat label="BEST SPREAD" value={bestSpread} color="text-green" />
-      <Stat label="LAST RUN" value={lastRunFormatted} color="text-text-secondary" />
+      <Stat label="SIGNALS" value={String(total)} color="text-orange" />
+      <Stat label="TOTAL EV" value={totalEv} color="text-green" />
+      <Stat label="TOP EV" value={topEv} color="text-green" />
+      <Stat label="AVG CONFIDENCE" value={avgConf} color="text-orange" />
+      <Stat label="AVG SPREAD" value={avgSpread} color="text-text-secondary" />
+      {onRankingChange && ranking !== undefined && (
+        <div className="flex items-center gap-1 px-3 ml-auto border-l border-border">
+          <span className="text-[10px] text-text-muted tracking-widest shrink-0 hidden sm:inline">
+            RANK
+          </span>
+          <div className="flex rounded border border-border overflow-hidden text-[10px]">
+            <button
+              type="button"
+              onClick={() => onRankingChange('profit')}
+              className={`px-2 py-1 tracking-wide ${
+                ranking === 'profit'
+                  ? 'bg-orange/20 text-orange'
+                  : 'text-text-muted hover:text-text-secondary'
+              }`}
+            >
+              Best EV
+            </button>
+            <button
+              type="button"
+              onClick={() => onRankingChange('diverse')}
+              className={`px-2 py-1 tracking-wide border-l border-border ${
+                ranking === 'diverse'
+                  ? 'bg-orange/20 text-orange'
+                  : 'text-text-muted hover:text-text-secondary'
+              }`}
+            >
+              Diverse
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

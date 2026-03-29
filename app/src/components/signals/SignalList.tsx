@@ -1,11 +1,11 @@
 import { useState } from 'react';
-import type { CandidatePair } from '../../lib/types';
+import type { ArbitrageSignal } from '../../lib/types';
 import SignalRow from './SignalRow';
 
-type Filter = 'ALL' | '≥.90' | 'NEG';
+type Filter = 'ALL' | 'HIGH EV' | 'HIGH CONF';
 
 interface SignalListProps {
-  candidates: CandidatePair[];
+  signals: ArbitrageSignal[];
   loading: boolean;
   error: string | null;
   selectedId: string | null;
@@ -14,19 +14,19 @@ interface SignalListProps {
 
 const EMPTY_MESSAGES: Record<Filter, string> = {
   ALL: 'NO SIGNALS — pipeline has not run yet',
-  '≥.90': 'NO HIGH-CONFIDENCE SIGNALS',
-  NEG: 'NO NEGATION CANDIDATES',
+  'HIGH EV': 'NO HIGH-EV SIGNALS',
+  'HIGH CONF': 'NO HIGH-CONFIDENCE SIGNALS',
 };
 
-export default function SignalList({ candidates, loading, error, selectedId, onSelect }: SignalListProps) {
+export default function SignalList({ signals, loading, error, selectedId, onSelect }: SignalListProps) {
   const [filter, setFilter] = useState<Filter>('ALL');
 
   const filtered =
-    filter === '≥.90'
-      ? candidates.filter((c) => c.similarity_score >= 0.9)
-      : filter === 'NEG'
-      ? candidates.filter((c) => c.has_potential_negation)
-      : candidates;
+    filter === 'HIGH EV'
+      ? signals.filter((s) => s.expected_profit >= 10)
+      : filter === 'HIGH CONF'
+      ? signals.filter((s) => s.confidence >= 0.8)
+      : signals;
 
   const FilterBtn = ({ f }: { f: Filter }) => (
     <button
@@ -44,11 +44,11 @@ export default function SignalList({ candidates, loading, error, selectedId, onS
   return (
     <div className="flex flex-col h-full border-r border-border" style={{ width: '320px', minWidth: '280px' }}>
       <div className="flex items-center justify-between px-3 py-2 border-b border-border shrink-0">
-        <span className="text-[10px] text-text-muted tracking-widest">RANKED BY SIM ▾</span>
+        <span className="text-[10px] text-text-muted tracking-widest">RANKED BY EV ▾</span>
         <div className="flex gap-1">
           <FilterBtn f="ALL" />
-          <FilterBtn f="≥.90" />
-          <FilterBtn f="NEG" />
+          <FilterBtn f="HIGH EV" />
+          <FilterBtn f="HIGH CONF" />
         </div>
       </div>
 
@@ -70,12 +70,12 @@ export default function SignalList({ candidates, loading, error, selectedId, onS
         ) : filtered.length === 0 ? (
           <div className="p-4 text-text-muted text-xs tracking-wider">{EMPTY_MESSAGES[filter]}</div>
         ) : (
-          filtered.map((pair) => (
+          filtered.map((signal) => (
             <SignalRow
-              key={pair.id}
-              pair={pair}
-              selected={pair.id === selectedId}
-              onClick={() => onSelect(pair.id)}
+              key={signal.pair_id}
+              signal={signal}
+              selected={signal.pair_id === selectedId}
+              onClick={() => onSelect(signal.pair_id)}
             />
           ))
         )}

@@ -40,6 +40,62 @@ export interface PipelineStatus {
   logs: string[];
 }
 
+export interface ArbitrageSignal {
+  pair_id: string;
+  platform_a: string;
+  platform_b: string;
+  market_a_id: string;
+  market_b_id: string;
+  text_a: string;
+  text_b: string;
+  price_a: number;
+  price_b: number;
+  raw_spread: number;
+  direction: string;
+  expected_profit: number;
+  kelly_fraction: number;
+  recommended_size_usd: number;
+  confidence: number;
+  regression_convergence_prob: number;
+  created_at: string;
+}
+
+export interface SignalsStats {
+  total: number;
+  total_ev: number;
+  top_ev: number;
+  avg_confidence: number;
+  avg_spread: number;
+}
+
+export interface SimTrade {
+  pair_id: string;
+  platform_a: string;
+  platform_b: string;
+  market_a_id: string;
+  market_b_id: string;
+  text_a: string;
+  text_b: string;
+  price_a: number;
+  price_b: number;
+  raw_spread: number;
+  direction: string;
+  expected_profit: number;
+  recommended_size_usd: number;
+  confidence: number;
+  exit_date: string;
+  resolution_a: string | null;
+  resolution_b: string | null;
+  outcome: 'WIN' | 'LOSS' | 'UNKNOWN';
+  realized_pnl: number | null;
+}
+
+export interface PnlPoint {
+  date: string;
+  daily_pnl: number;
+  cumulative_pnl: number;
+}
+
 export interface AppConfig {
   embedding_model: string;
   similarity_threshold: number;

@@ -1,31 +1,15 @@
-import { useState } from 'react';
-import type { CandidatePair } from '../../lib/types';
+import type { ArbitrageSignal } from '../../lib/types';
 import SignalRow from './SignalRow';
 
-type Filter = 'ALL' | '≥.90' | 'NEG';
-
-interface SignalListProps {
-  candidates: CandidatePair[];
+export interface SignalListProps {
+  signals: ArbitrageSignal[];
   loading: boolean;
   error: string | null;
   selectedId: string | null;
-  onSelect: (id: string) => void;
+  onSelect: (id: string | null) => void;
 }
 
-const EMPTY: Record<Filter, string> = {
-  ALL: 'NO SIGNALS',
-  '≥.90': 'NO HIGH-CONF SIGNALS',
-  NEG: 'NO NEGATIONS',
-};
-
-export default function SignalList({ candidates, loading, error, selectedId, onSelect }: SignalListProps) {
-  const [filter, setFilter] = useState<Filter>('ALL');
-
-  const filtered =
-    filter === '≥.90' ? candidates.filter(c => c.similarity_score >= 0.9) :
-    filter === 'NEG'  ? candidates.filter(c => c.has_potential_negation) :
-    candidates;
-
+export default function SignalList({ signals, loading, error, selectedId, onSelect }: SignalListProps) {
   return (
     <div style={{
       display: 'flex',
@@ -47,29 +31,11 @@ export default function SignalList({ candidates, loading, error, selectedId, onS
         flexShrink: 0,
       }}>
         <span style={{ fontSize: '8px', color: '#2a3060', letterSpacing: '0.25em' }}>
-          RANKED BY SIM ▾
+          RANKED BY EV ▾
         </span>
-        <div style={{ display: 'flex', gap: '2px' }}>
-          {(['ALL', '≥.90', 'NEG'] as Filter[]).map(f => (
-            <button
-              key={f}
-              onClick={() => setFilter(f)}
-              style={{
-                padding: '2px 8px',
-                fontSize: '8px',
-                letterSpacing: '0.1em',
-                fontFamily: 'IBM Plex Mono, monospace',
-                background: filter === f ? 'rgba(255,107,53,0.15)' : 'transparent',
-                border: `1px solid ${filter === f ? '#ff6b35' : '#1a2040'}`,
-                color: filter === f ? '#ff6b35' : '#2a3060',
-                cursor: 'pointer',
-                transition: 'all 0.1s',
-              }}
-            >
-              {f}
-            </button>
-          ))}
-        </div>
+        <span style={{ fontSize: '8px', color: '#2a3060', letterSpacing: '0.15em' }}>
+          {signals.length} SIGNALS
+        </span>
       </div>
 
       {/* List body */}
@@ -86,20 +52,20 @@ export default function SignalList({ candidates, loading, error, selectedId, onS
             <div style={{ fontSize: '9px', color: '#ff3b3b', letterSpacing: '0.15em', marginBottom: '8px' }}>⚠ FETCH ERROR</div>
             <div style={{ fontSize: '9px', color: '#2a3060' }}>{error}</div>
           </div>
-        ) : filtered.length === 0 ? (
+        ) : signals.length === 0 ? (
           <div style={{ padding: '20px 14px' }}>
-            <div style={{ fontSize: '9px', color: '#1a2040', letterSpacing: '0.2em' }}>{EMPTY[filter]}</div>
+            <div style={{ fontSize: '9px', color: '#1a2040', letterSpacing: '0.2em' }}>NO SIGNALS</div>
             <div style={{ marginTop: '8px', fontSize: '8px', color: '#0f1428', letterSpacing: '0.1em' }}>
-              {filter === 'ALL' ? 'pipeline has not run yet' : 'adjust filter'}
+              pipeline has not run yet
             </div>
           </div>
         ) : (
-          filtered.map((pair, i) => (
+          signals.map((signal, i) => (
             <SignalRow
-              key={pair.id}
-              pair={pair}
-              selected={pair.id === selectedId}
-              onClick={() => onSelect(pair.id)}
+              key={signal.pair_id}
+              signal={signal}
+              selected={signal.pair_id === selectedId}
+              onClick={() => onSelect(signal.pair_id)}
               index={i}
             />
           ))

@@ -121,12 +121,12 @@ def main() -> None:
     )
     parser.add_argument(
         "--mongo",
-        default=os.environ.get("DATABASE_URL") or os.environ.get("MONGO_URI", DEFAULT_MONGO_URI),
-        help=f"MongoDB connection string (or set DATABASE_URL/MONGO_URI env var). Default: {DEFAULT_MONGO_URI}",
+        default=os.environ.get("MONGO_URI", DEFAULT_MONGO_URI),
+        help=f"MongoDB connection string (or set MONGO_URI env var). Default: {DEFAULT_MONGO_URI}",
     )
     parser.add_argument(
         "--database",
-        default=os.environ.get("MONGO_DB") or os.environ.get("MONGO_DATABASE", DEFAULT_DATABASE),
+        default=os.environ.get("MONGO_DATABASE", DEFAULT_DATABASE),
         help=f"MongoDB database name. Default: {DEFAULT_DATABASE}",
     )
     parser.add_argument(

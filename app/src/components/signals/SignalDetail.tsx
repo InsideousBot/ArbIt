@@ -1,4 +1,4 @@
-import type { CandidatePair } from '../../lib/types';
+import type { ArbitrageSignal } from '../../lib/types';
 
 const MARKET_COLOR: Record<string, string> = {
   polymarket: '#4fc3f7',
@@ -85,12 +85,12 @@ function MarketCard({ market, text, price }: { market: string; text: string; pri
   );
 }
 
-interface SignalDetailProps {
-  pair: CandidatePair | null;
+export interface SignalDetailProps {
+  signal: ArbitrageSignal | null;
 }
 
-export default function SignalDetail({ pair }: SignalDetailProps) {
-  if (!pair) {
+export default function SignalDetail({ signal }: SignalDetailProps) {
+  if (!signal) {
     return (
       <div style={{
         flex: 1,
@@ -104,8 +104,7 @@ export default function SignalDetail({ pair }: SignalDetailProps) {
     );
   }
 
-  const spread = Math.round(pair.price_spread * 100);
-  const isNeg = pair.has_potential_negation;
+  const spread = Math.round(signal.raw_spread * 100);
 
   return (
     <div style={{
@@ -129,7 +128,7 @@ export default function SignalDetail({ pair }: SignalDetailProps) {
           SIGNAL DETAIL
         </span>
         <div style={{ display: 'flex', alignItems: 'baseline', gap: '6px' }}>
-          <span style={{ fontSize: '9px', color: '#1a2040', letterSpacing: '0.15em' }}>SIM</span>
+          <span style={{ fontSize: '9px', color: '#1a2040', letterSpacing: '0.15em' }}>EV</span>
           <span
             className="glow-orange"
             style={{
@@ -141,31 +140,10 @@ export default function SignalDetail({ pair }: SignalDetailProps) {
               fontVariantNumeric: 'tabular-nums',
             }}
           >
-            {pair.similarity_score.toFixed(3)}
+            ${signal.expected_profit.toFixed(2)}
           </span>
         </div>
       </div>
-
-      {/* Negation banner */}
-      {isNeg && (
-        <div style={{
-          margin: '12px 20px 0',
-          padding: '8px 12px',
-          background: 'rgba(255,59,59,0.05)',
-          border: '1px solid rgba(255,59,59,0.2)',
-          borderLeft: '3px solid #ff3b3b',
-          flexShrink: 0,
-        }}>
-          <span style={{ fontSize: '9px', color: '#ff3b3b', letterSpacing: '0.15em' }}>
-            ⚠ POTENTIAL NEGATION — questions may be inverses
-          </span>
-          {pair.negation_tokens.length > 0 && (
-            <div style={{ marginTop: '3px', fontSize: '8px', color: 'rgba(255,59,59,0.5)', letterSpacing: '0.1em' }}>
-              TOKENS: {pair.negation_tokens.join(', ')}
-            </div>
-          )}
-        </div>
-      )}
 
       {/* Market cards */}
       <div style={{
@@ -174,8 +152,8 @@ export default function SignalDetail({ pair }: SignalDetailProps) {
         padding: '16px 20px',
         flexShrink: 0,
       }}>
-        <MarketCard market={pair.market_a} text={pair.text_a} price={pair.price_a} />
-        <MarketCard market={pair.market_b} text={pair.text_b} price={pair.price_b} />
+        <MarketCard market={signal.platform_a} text={signal.text_a} price={signal.price_a} />
+        <MarketCard market={signal.platform_b} text={signal.text_b} price={signal.price_b} />
       </div>
 
       {/* Stats strip */}
@@ -187,10 +165,10 @@ export default function SignalDetail({ pair }: SignalDetailProps) {
         flexShrink: 0,
       }}>
         {[
-          { label: 'SIM SCORE', value: pair.similarity_score.toFixed(4), color: '#ff6b35', glow: 'glow-orange' },
+          { label: 'CONFIDENCE', value: (signal.confidence * 100).toFixed(1) + '%', color: '#ff6b35', glow: 'glow-orange' },
           { label: 'PRICE SPREAD', value: `+${spread}pp`, color: '#00e676', glow: 'glow-green' },
-          { label: 'VOLUME', value: '--', color: '#1a2040', glow: '' },
-          { label: 'LLM STATUS', value: 'PENDING', color: '#2a3060', glow: '' },
+          { label: 'KELLY SIZE', value: `$${signal.recommended_size_usd.toFixed(0)}`, color: '#4fc3f7', glow: '' },
+          { label: 'CONV. PROB', value: (signal.regression_convergence_prob * 100).toFixed(1) + '%', color: '#2a3060', glow: '' },
         ].map(({ label, value, color, glow }, i) => (
           <div key={i} style={{
             flex: 1,

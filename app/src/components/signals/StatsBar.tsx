@@ -1,9 +1,12 @@
-import type { CandidatePair } from '../../lib/types';
+import type { SignalsStats } from '../../lib/types';
+
+export type SignalsRankingMode = 'profit' | 'diverse';
 
 interface StatsBarProps {
-  candidates: CandidatePair[];
-  lastRun: string | null;
+  stats: SignalsStats | null;
   loading: boolean;
+  ranking: SignalsRankingMode;
+  onRankingChange: (mode: SignalsRankingMode) => void;
 }
 
 function Stat({
@@ -48,18 +51,8 @@ function Stat({
   );
 }
 
-export default function StatsBar({ candidates, lastRun, loading }: StatsBarProps) {
+export default function StatsBar({ stats, loading, ranking, onRankingChange }: StatsBarProps) {
   const dash = '--';
-  const count = candidates.length;
-  const highConf = candidates.filter(c => c.similarity_score >= 0.90).length;
-  const negCount = candidates.filter(c => c.has_potential_negation).length;
-  const topScore = count > 0 ? Math.max(...candidates.map(c => c.similarity_score)).toFixed(3) : dash;
-  const bestSpread = count > 0
-    ? `${Math.round(Math.max(...candidates.map(c => c.price_spread)) * 100)}`
-    : dash;
-  const lastRunStr = lastRun
-    ? new Date(lastRun).toLocaleTimeString('en-US', { hour12: false })
-    : dash;
 
   return (
     <div style={{
@@ -73,21 +66,44 @@ export default function StatsBar({ candidates, lastRun, loading }: StatsBarProps
       {/* Left accent */}
       <div style={{ width: '3px', background: 'linear-gradient(180deg, #ff6b35, rgba(255,107,53,0.2))', flexShrink: 0 }} />
 
-      {loading ? (
+      {loading || !stats ? (
         <div style={{ display: 'flex', alignItems: 'center', padding: '0 20px' }}>
           <span style={{ color: '#1a2040', fontSize: '9px', letterSpacing: '0.3em' }}>LOADING</span>
         </div>
       ) : (
         <>
-          <Stat label="CANDIDATES" value={String(count)} color="#ff6b35" glowClass={count > 0 ? 'glow-orange' : ''} borderColor="#ff6b35" />
-          <Stat label="HIGH CONF" sub="≥0.90" value={String(highConf)} color={highConf > 0 ? '#00e676' : '#1a2040'} glowClass={highConf > 0 ? 'glow-green' : ''} />
-          <Stat label="NEGATION" value={String(negCount)} color={negCount > 0 ? '#ff3b3b' : '#1a2040'} glowClass={negCount > 0 ? 'glow-red' : ''} />
+          <Stat label="SIGNALS" value={String(stats.total)} color="#ff6b35" glowClass={stats.total > 0 ? 'glow-orange' : ''} borderColor="#ff6b35" />
+          <Stat label="TOTAL EV" sub="$" value={stats.total_ev > 0 ? `$${stats.total_ev.toFixed(2)}` : dash} color={stats.total_ev > 0 ? '#00e676' : '#1a2040'} glowClass={stats.total_ev > 0 ? 'glow-green' : ''} />
+          <Stat label="TOP EV" sub="$" value={stats.top_ev > 0 ? `$${stats.top_ev.toFixed(2)}` : dash} color={stats.top_ev > 0 ? '#00e676' : '#1a2040'} glowClass={stats.top_ev > 0 ? 'glow-green' : ''} />
 
           <div style={{ width: '1px', background: '#1a2040', margin: '10px 0' }} />
 
-          <Stat label="TOP SCORE" value={topScore} color={topScore !== dash ? '#ff6b35' : '#1a2040'} glowClass={topScore !== dash ? 'glow-orange' : ''} />
-          <Stat label="BEST SPREAD" sub="pp" value={bestSpread !== dash ? `+${bestSpread}` : dash} color={bestSpread !== dash ? '#00e676' : '#1a2040'} glowClass={bestSpread !== dash ? 'glow-green' : ''} />
-          <Stat label="LAST RUN" value={lastRunStr} color="#2a3060" />
+          <Stat label="AVG CONF" value={stats.avg_confidence > 0 ? stats.avg_confidence.toFixed(3) : dash} color={stats.avg_confidence > 0 ? '#ff6b35' : '#1a2040'} glowClass={stats.avg_confidence > 0 ? 'glow-orange' : ''} />
+          <Stat label="AVG SPREAD" sub="pp" value={stats.avg_spread > 0 ? `+${Math.round(stats.avg_spread * 100)}` : dash} color={stats.avg_spread > 0 ? '#00e676' : '#1a2040'} glowClass={stats.avg_spread > 0 ? 'glow-green' : ''} />
+
+          {/* Ranking toggle */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: '4px', padding: '0 16px', marginLeft: 'auto' }}>
+            {(['profit', 'diverse'] as SignalsRankingMode[]).map((mode) => (
+              <button
+                key={mode}
+                onClick={() => onRankingChange(mode)}
+                style={{
+                  padding: '3px 10px',
+                  fontSize: '8px',
+                  letterSpacing: '0.15em',
+                  fontFamily: 'IBM Plex Mono, monospace',
+                  background: ranking === mode ? 'rgba(255,107,53,0.15)' : 'transparent',
+                  border: `1px solid ${ranking === mode ? '#ff6b35' : '#1a2040'}`,
+                  color: ranking === mode ? '#ff6b35' : '#2a3060',
+                  cursor: 'pointer',
+                  transition: 'all 0.1s',
+                  textTransform: 'uppercase',
+                }}
+              >
+                {mode}
+              </button>
+            ))}
+          </div>
         </>
       )}
     </div>

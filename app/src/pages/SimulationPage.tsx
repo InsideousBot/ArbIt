@@ -1,334 +1,249 @@
-import { useState } from 'react';
-import {
-  AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer,
-} from 'recharts';
-import type { SimResult, RealismMode } from '../lib/types';
+import { useEffect, useRef, useState, useCallback } from 'react';
+import type { SimTrade, PnlPoint } from '../lib/types';
 import { api } from '../lib/api';
 
-const MODES: RealismMode[] = ['optimistic', 'realistic', 'pessimistic'];
-
-const MODE_COLOR: Record<RealismMode, string> = {
-  optimistic: '#00e676',
-  realistic: '#ff6b35',
-  pessimistic: '#ff3b3b',
-};
-const MODE_GLOW: Record<RealismMode, string> = {
-  optimistic: '0 0 10px rgba(0,230,118,0.5)',
-  realistic: '0 0 10px rgba(255,107,53,0.5)',
-  pessimistic: '0 0 10px rgba(255,59,59,0.5)',
+const MARKET_COLOR: Record<string, string> = {
+  polymarket: '#4fc3f7',
+  kalshi: '#ff9800',
+  manifold: '#a78bfa',
 };
 
-function MetricTile({
-  label, value, color, glow, sub,
-}: { label: string; value: string; color: string; glow?: string; sub?: string }) {
+const SPEEDS = [1, 5, 20, 100];
+
+function PnlChart({ curve, currentDate }: { curve: PnlPoint[]; currentDate: string }) {
+  if (curve.length === 0) return null;
+  const max = Math.max(...curve.map((p) => Math.abs(p.cumulative_pnl)), 1);
+  const w = 100 / (curve.length - 1 || 1);
+
   return (
-    <div style={{
-      display: 'flex',
-      flexDirection: 'column',
-      gap: '3px',
-      padding: '12px 14px',
-      border: '1px solid #0f1428',
-      background: '#040608',
-      flex: 1,
-      minWidth: '100px',
-    }}>
-      <span style={{
-        fontSize: '20px',
-        fontWeight: '600',
-        color,
-        lineHeight: 1,
-        letterSpacing: '-0.02em',
-        fontVariantNumeric: 'tabular-nums',
-        textShadow: glow,
-      }}>
-        {value}
-      </span>
-      <span style={{ fontSize: '7px', color: '#2a3060', letterSpacing: '0.2em' }}>{label}</span>
-      {sub && <span style={{ fontSize: '7px', color: '#1a2040', letterSpacing: '0.1em' }}>{sub}</span>}
+    <div className="relative h-20 w-full border border-border bg-surface overflow-hidden">
+      <span className="absolute top-1 left-2 text-[9px] text-text-muted tracking-widest">P&L CURVE</span>
+      <svg className="absolute inset-0 w-full h-full" viewBox={`0 0 100 40`} preserveAspectRatio="none">
+        <line x1="0" y1="20" x2="100" y2="20" stroke="#333" strokeWidth="0.3" />
+        {curve.map((p, i) => {
+          if (i === 0) return null;
+          const prev = curve[i - 1];
+          const x1 = (i - 1) * w;
+          const x2 = i * w;
+          const y1 = 20 - (prev.cumulative_pnl / max) * 18;
+          const y2 = 20 - (p.cumulative_pnl / max) * 18;
+          const color = p.cumulative_pnl >= 0 ? '#4ade80' : '#f87171';
+          return <line key={i} x1={x1} y1={y1} x2={x2} y2={y2} stroke={color} strokeWidth="0.6" />;
+        })}
+        {/* current date marker */}
+        {(() => {
+          const idx = curve.findIndex((p) => p.date >= currentDate);
+          if (idx < 0) return null;
+          const x = idx * w;
+          return <line x1={x} y1="0" x2={x} y2="40" stroke="#f97316" strokeWidth="0.5" strokeDasharray="2,1" />;
+        })()}
+      </svg>
     </div>
   );
 }
 
-function fmt(n: number, decimals = 2) {
-  return n.toFixed(decimals);
-}
-function fmtPnl(n: number) {
-  const s = n >= 0 ? `+$${fmt(n)}` : `-$${fmt(Math.abs(n))}`;
-  return s;
+function TradeCard({ trade }: { trade: SimTrade }) {
+  const isWin = trade.outcome === 'WIN';
+  const isLoss = trade.outcome === 'LOSS';
+  const color = isWin ? '#4ade80' : isLoss ? '#f87171' : '#94a3b8';
+  const bg = isWin ? 'bg-[#0a1a0f]' : isLoss ? 'bg-[#1a0a0a]' : 'bg-surface';
+  const pnl = trade.realized_pnl;
+
+  return (
+    <div className={`px-3 py-2 border-b border-border ${bg} text-xs`}>
+      <div className="flex items-center gap-2 mb-1">
+        <span className="font-bold" style={{ color }}>
+          {isWin ? '▲ WIN' : isLoss ? '▼ LOSS' : '◌ UNKNOWN'}
+        </span>
+        <span className="text-[9px] font-bold px-1 border rounded" style={{ color: MARKET_COLOR[trade.platform_a] ?? '#888', borderColor: MARKET_COLOR[trade.platform_a] ?? '#888' }}>
+          {trade.platform_a.toUpperCase().slice(0, 4)}
+        </span>
+        <span className="text-text-muted text-[9px]">↔</span>
+        <span className="text-[9px] font-bold px-1 border rounded" style={{ color: MARKET_COLOR[trade.platform_b] ?? '#888', borderColor: MARKET_COLOR[trade.platform_b] ?? '#888' }}>
+          {trade.platform_b.toUpperCase().slice(0, 4)}
+        </span>
+        <span className="ml-auto font-bold" style={{ color }}>
+          {pnl !== null ? `${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)}` : '--'}
+        </span>
+      </div>
+      <div className="text-text-primary truncate">{trade.text_a || trade.market_a_id}</div>
+      <div className="text-text-muted text-[10px] mt-0.5">
+        {trade.exit_date} · spread {Math.round(trade.raw_spread * 100)}pp · ${trade.recommended_size_usd.toFixed(0)} size
+      </div>
+    </div>
+  );
 }
 
 export default function SimulationPage() {
-  const [mode, setMode] = useState<RealismMode>('realistic');
-  const [capital, setCapital] = useState(10000);
-  const [running, setRunning] = useState(false);
-  const [result, setResult] = useState<SimResult | null>(null);
+  const [allTrades, setAllTrades] = useState<SimTrade[]>([]);
+  const [pnlCurve, setPnlCurve] = useState<PnlPoint[]>([]);
+  const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  async function handleRun() {
-    setRunning(true);
-    setError(null);
-    try {
-      const r = await api.runSimulation(mode, capital);
-      setResult(r);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : 'Unknown error');
-    } finally {
-      setRunning(false);
+  const [playing, setPlaying] = useState(false);
+  const [speed, setSpeed] = useState(1);
+  const [_currentIdx, setCurrentIdx] = useState(0);
+  const [selectedDate, setSelectedDate] = useState<string>('');
+
+  const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  useEffect(() => {
+    Promise.all([api.getSimulationTrades(), api.getSimulationPnlCurve()])
+      .then(([trades, curve]) => {
+        setAllTrades(trades);
+        setPnlCurve(curve);
+        setCurrentIdx(0);
+        if (trades.length > 0) setSelectedDate(trades[0].exit_date);
+      })
+      .catch((e) => setError(e.message))
+      .finally(() => setLoading(false));
+  }, []);
+
+  // unique sorted dates
+  const dates = [...new Set(allTrades.map((t) => t.exit_date).filter(Boolean))].sort();
+
+  const dateIdx = dates.indexOf(selectedDate);
+  const visibleTrades = allTrades.filter((t) => t.exit_date <= selectedDate);
+  const todayTrades = allTrades.filter((t) => t.exit_date === selectedDate);
+  const currentPnl = pnlCurve.find((p) => p.date === selectedDate)?.cumulative_pnl ?? 0;
+  const wins = visibleTrades.filter((t) => t.outcome === 'WIN').length;
+  const losses = visibleTrades.filter((t) => t.outcome === 'LOSS').length;
+  const totalPnl = visibleTrades.reduce((s, t) => s + (t.realized_pnl ?? 0), 0);
+
+  const tick = useCallback(() => {
+    setCurrentIdx((prev) => {
+      const next = prev + 1;
+      if (next >= dates.length) {
+        setPlaying(false);
+        return prev;
+      }
+      setSelectedDate(dates[next]);
+      return next;
+    });
+  }, [dates]);
+
+  useEffect(() => {
+    if (playing) {
+      const ms = Math.max(50, 600 / speed);
+      intervalRef.current = setInterval(tick, ms);
+    } else {
+      if (intervalRef.current) clearInterval(intervalRef.current);
     }
+    return () => { if (intervalRef.current) clearInterval(intervalRef.current); };
+  }, [playing, speed, tick]);
+
+  function handleReset() {
+    setPlaying(false);
+    setCurrentIdx(0);
+    if (dates.length > 0) setSelectedDate(dates[0]);
   }
 
-  const accentColor = MODE_COLOR[mode];
-  const accentGlow = MODE_GLOW[mode];
-  const s = result?.summary;
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center h-full">
+        <span className="text-text-muted text-xs tracking-widest animate-pulse">LOADING SIMULATION...</span>
+      </div>
+    );
+  }
 
-  // Format equity curve for recharts
-  const equityData = (result?.equity_curve ?? []).map((pt, i) => ({
-    i,
-    equity: pt.equity,
-    label: pt.t ? new Date(pt.t).toLocaleTimeString('en-US', { hour12: false }) : String(i),
-  }));
-
-  const pnlColor = s && s.realized_pnl >= 0 ? '#00e676' : '#ff3b3b';
-  const equityColor = s && s.final_equity >= capital ? '#00e676' : '#ff3b3b';
+  if (error) {
+    return <div className="p-5 text-red text-xs tracking-wider">⚠ {error}</div>;
+  }
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', height: '100%', overflow: 'hidden' }}>
-      {/* Header bar */}
-      <div style={{
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'space-between',
-        padding: '0 20px',
-        height: '36px',
-        borderBottom: '1px solid #0a0d1a',
-        background: 'linear-gradient(180deg, #070a14 0%, #060810 100%)',
-        flexShrink: 0,
-      }}>
-        <span style={{ fontSize: '8px', color: '#1a2040', letterSpacing: '0.3em' }}>BACKTEST SIMULATOR</span>
-        {result && (
-          <span style={{ fontSize: '8px', color: '#2a3060', letterSpacing: '0.15em' }}>
-            {result.summary.events_processed} EVENTS · {result.summary.run_duration_s}s
-          </span>
-        )}
-      </div>
+    <div className="flex flex-col h-full overflow-hidden">
 
-      <div style={{ flex: 1, overflowY: 'auto' }}>
-        {/* Config panel */}
-        <div style={{
-          display: 'flex',
-          alignItems: 'center',
-          gap: '16px',
-          padding: '14px 20px',
-          borderBottom: '1px solid #0a0d1a',
-          flexShrink: 0,
-          background: '#040608',
-        }}>
-          {/* Realism mode */}
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '5px' }}>
-            <span style={{ fontSize: '7px', color: '#1a2040', letterSpacing: '0.2em' }}>REALISM MODE</span>
-            <div style={{ display: 'flex', gap: '3px' }}>
-              {MODES.map(m => (
-                <button
-                  key={m}
-                  onClick={() => setMode(m)}
-                  style={{
-                    padding: '3px 10px',
-                    fontSize: '8px',
-                    letterSpacing: '0.1em',
-                    fontFamily: 'IBM Plex Mono, monospace',
-                    background: mode === m ? `rgba(${m === 'optimistic' ? '0,230,118' : m === 'realistic' ? '255,107,53' : '255,59,59'},0.12)` : 'transparent',
-                    border: `1px solid ${mode === m ? MODE_COLOR[m] : '#1a2040'}`,
-                    color: mode === m ? MODE_COLOR[m] : '#2a3060',
-                    cursor: 'pointer',
-                    textTransform: 'uppercase',
-                  }}
-                >
-                  {m}
-                </button>
-              ))}
-            </div>
-          </div>
+      {/* Controls */}
+      <div className="flex items-center gap-4 px-5 py-2 border-b border-border bg-surface shrink-0 flex-wrap">
+        <span className="text-[10px] text-text-muted tracking-[3px]">SIMULATION</span>
 
-          {/* Capital input */}
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '5px' }}>
-            <span style={{ fontSize: '7px', color: '#1a2040', letterSpacing: '0.2em' }}>INITIAL CAPITAL ($)</span>
-            <input
-              type="number"
-              value={capital}
-              onChange={e => setCapital(Number(e.target.value))}
-              style={{
-                width: '100px',
-                padding: '4px 8px',
-                fontSize: '12px',
-                fontFamily: 'IBM Plex Mono, monospace',
-                background: '#060810',
-                border: '1px solid #1a2040',
-                color: '#c0c8d8',
-                outline: 'none',
-                letterSpacing: '0.05em',
-              }}
-            />
-          </div>
+        <button
+          onClick={() => setPlaying((p) => !p)}
+          className={`px-3 py-1 text-xs tracking-widest border rounded transition-colors ${playing ? 'border-orange text-orange bg-orange/10' : 'border-green text-green hover:bg-green/10'}`}
+        >
+          {playing ? '⏸ PAUSE' : '▶ PLAY'}
+        </button>
 
-          {/* Run button */}
-          <button
-            onClick={handleRun}
-            disabled={running}
-            style={{
-              marginTop: '18px',
-              padding: '6px 20px',
-              fontSize: '9px',
-              letterSpacing: '0.2em',
-              fontFamily: 'IBM Plex Mono, monospace',
-              fontWeight: '600',
-              background: running ? 'rgba(255,107,53,0.05)' : `rgba(${mode === 'optimistic' ? '0,230,118' : mode === 'realistic' ? '255,107,53' : '255,59,59'},0.1)`,
-              border: `1px solid ${running ? '#1a2040' : accentColor}`,
-              color: running ? '#2a3060' : accentColor,
-              cursor: running ? 'default' : 'pointer',
-              textShadow: running ? 'none' : accentGlow,
-              transition: 'all 0.15s',
-            }}
-          >
-            {running ? '● RUNNING...' : '▶ RUN BACKTEST'}
-          </button>
+        <button onClick={handleReset} className="px-3 py-1 text-xs tracking-widest border border-border text-text-muted hover:text-text-secondary rounded">
+          ↺ RESET
+        </button>
 
-          {error && (
-            <span style={{ fontSize: '9px', color: '#ff3b3b', letterSpacing: '0.1em', marginTop: '18px' }}>
-              ⚠ {error}
-            </span>
-          )}
+        <div className="flex items-center gap-1">
+          {SPEEDS.map((s) => (
+            <button
+              key={s}
+              onClick={() => setSpeed(s)}
+              className={`px-2 py-0.5 text-[10px] rounded border transition-colors ${speed === s ? 'border-orange text-orange' : 'border-border text-text-muted'}`}
+            >
+              {s}x
+            </button>
+          ))}
         </div>
 
-        {result && s && (
-          <>
-            {/* Metrics grid */}
-            <div style={{
-              display: 'flex',
-              gap: '2px',
-              padding: '12px 20px',
-              flexWrap: 'wrap',
-              borderBottom: '1px solid #0a0d1a',
-            }}>
-              <MetricTile label="REALIZED P&L" value={fmtPnl(s.realized_pnl)} color={pnlColor} glow={s.realized_pnl >= 0 ? '0 0 10px rgba(0,230,118,0.5)' : '0 0 10px rgba(255,59,59,0.5)'} />
-              <MetricTile label="FINAL EQUITY" value={`$${fmt(s.final_equity)}`} color={equityColor} glow={s.final_equity >= capital ? '0 0 10px rgba(0,230,118,0.5)' : '0 0 10px rgba(255,59,59,0.5)'} />
-              <MetricTile label="WIN RATE" value={`${fmt(s.win_rate * 100)}%`} color={s.win_rate >= 0.5 ? '#00e676' : '#ff9800'} />
-              <MetricTile label="FILL RATE" value={`${fmt(s.fill_rate * 100)}%`} color="#4fc3f7" />
-              <MetricTile label="SHARPE" value={s.sharpe_ratio != null ? fmt(s.sharpe_ratio, 3) : '--'} color="#a78bfa" />
-              <MetricTile label="MAX DRAWDOWN" value={`${fmt(s.max_drawdown * 100)}%`} color={s.max_drawdown > 0.1 ? '#ff3b3b' : '#ff9800'} />
-              <MetricTile label="FEES PAID" value={`$${fmt(s.fees_paid)}`} color="#2a3060" />
-              <MetricTile label="SLIPPAGE" value={`$${fmt(s.slippage_cost)}`} color="#2a3060" />
-              <MetricTile label="TRADES" value={`${s.trades_filled}/${s.trades_attempted}`} color="#ff6b35" sub="filled/attempted" />
-              <MetricTile label="AVG PROFIT" value={`$${fmt(s.avg_profit_per_trade, 4)}`} color="#4fc3f7" sub="per trade" />
-            </div>
+        {/* Date scrubber */}
+        <div className="flex-1 min-w-40 flex items-center gap-2">
+          <input
+            type="range"
+            min={0}
+            max={Math.max(dates.length - 1, 0)}
+            value={dateIdx >= 0 ? dateIdx : 0}
+            onChange={(e) => {
+              const idx = Number(e.target.value);
+              setCurrentIdx(idx);
+              setSelectedDate(dates[idx] ?? '');
+              setPlaying(false);
+            }}
+            className="flex-1 accent-orange cursor-pointer"
+          />
+          <span className="text-[10px] text-text-secondary tracking-wider w-24 shrink-0">{selectedDate || '--'}</span>
+        </div>
 
-            {/* Equity curve */}
-            {equityData.length > 0 && (
-              <div style={{ padding: '16px 20px', borderBottom: '1px solid #0a0d1a' }}>
-                <div style={{ display: 'flex', alignItems: 'baseline', gap: '10px', marginBottom: '10px' }}>
-                  <span style={{ fontSize: '8px', color: '#1a2040', letterSpacing: '0.3em' }}>EQUITY CURVE</span>
-                  <span style={{ fontSize: '9px', color: equityColor, letterSpacing: '0.1em' }}>
-                    ${fmt(s.final_equity)} final
-                  </span>
-                </div>
-                <div style={{ height: '140px' }}>
-                  <ResponsiveContainer width="100%" height="100%">
-                    <AreaChart data={equityData} margin={{ top: 4, right: 4, left: 0, bottom: 0 }}>
-                      <defs>
-                        <linearGradient id="equityGrad" x1="0" y1="0" x2="0" y2="1">
-                          <stop offset="5%" stopColor={equityColor} stopOpacity={0.2} />
-                          <stop offset="95%" stopColor={equityColor} stopOpacity={0} />
-                        </linearGradient>
-                      </defs>
-                      <XAxis dataKey="label" hide />
-                      <YAxis
-                        domain={['auto', 'auto']}
-                        tick={{ fontSize: 8, fill: '#2a3060', fontFamily: 'IBM Plex Mono, monospace' }}
-                        tickLine={false}
-                        axisLine={false}
-                        width={60}
-                        tickFormatter={v => `$${v.toLocaleString()}`}
-                      />
-                      <Tooltip
-                        contentStyle={{
-                          background: '#040608',
-                          border: '1px solid #0f1428',
-                          borderRadius: 0,
-                          fontFamily: 'IBM Plex Mono, monospace',
-                          fontSize: '9px',
-                          color: '#c0c8d8',
-                        }}
-                        itemStyle={{ color: equityColor }}
-                        formatter={(v) => [`$${Number(v).toFixed(2)}`, 'EQUITY']}
-                        labelFormatter={() => ''}
-                      />
-                      <Area
-                        type="monotone"
-                        dataKey="equity"
-                        stroke={equityColor}
-                        strokeWidth={1.5}
-                        fill="url(#equityGrad)"
-                        dot={false}
-                        isAnimationActive={false}
-                      />
-                    </AreaChart>
-                  </ResponsiveContainer>
-                </div>
-              </div>
-            )}
+        {/* Stats */}
+        <div className="flex gap-4 text-[10px] tracking-wider shrink-0">
+          <span className="text-green">▲ {wins} WIN</span>
+          <span className="text-red">▼ {losses} LOSS</span>
+          <span className={totalPnl >= 0 ? 'text-green font-bold' : 'text-red font-bold'}>
+            {totalPnl >= 0 ? '+' : ''}${totalPnl.toFixed(2)} P&L
+          </span>
+        </div>
+      </div>
 
-            {/* Trade log */}
-            {result.trade_log.length > 0 && (
-              <div style={{ padding: '12px 20px 20px' }}>
-                <span style={{ fontSize: '8px', color: '#1a2040', letterSpacing: '0.3em' }}>
-                  TRADE LOG ({result.trade_log.length} SHOWN)
-                </span>
-                <div style={{ marginTop: '8px', border: '1px solid #0f1428' }}>
-                  {/* Header */}
-                  <div style={{
-                    display: 'grid',
-                    gridTemplateColumns: '1fr 80px 60px 60px 60px 60px 80px',
-                    padding: '5px 10px',
-                    borderBottom: '1px solid #0a0d1a',
-                    background: '#040608',
-                  }}>
-                    {['MARKET', 'PLATFORM', 'SIDE', 'PRICE', 'SIZE', 'FEE', 'STATUS'].map(h => (
-                      <span key={h} style={{ fontSize: '7px', color: '#1a2040', letterSpacing: '0.2em' }}>{h}</span>
-                    ))}
-                  </div>
-                  {result.trade_log.map((t, i) => {
-                    const sideColor = t.side === 'buy' ? '#00e676' : '#ff3b3b';
-                    const statusColor = t.status === 'filled' ? '#00e676' : t.status === 'rejected' ? '#ff3b3b' : '#ff9800';
-                    return (
-                      <div key={i} style={{
-                        display: 'grid',
-                        gridTemplateColumns: '1fr 80px 60px 60px 60px 60px 80px',
-                        padding: '5px 10px',
-                        borderBottom: '1px solid #060810',
-                        background: i % 2 === 0 ? 'transparent' : 'rgba(255,255,255,0.01)',
-                      }}>
-                        <span style={{ fontSize: '9px', color: '#5a6080', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                          {t.market_id}
-                        </span>
-                        <span style={{ fontSize: '9px', color: '#2a3060', letterSpacing: '0.05em' }}>{t.platform}</span>
-                        <span style={{ fontSize: '9px', color: sideColor, letterSpacing: '0.05em', textTransform: 'uppercase' }}>{t.side}</span>
-                        <span style={{ fontSize: '9px', color: '#c0c8d8', fontVariantNumeric: 'tabular-nums' }}>{t.price}</span>
-                        <span style={{ fontSize: '9px', color: '#c0c8d8', fontVariantNumeric: 'tabular-nums' }}>{t.size}</span>
-                        <span style={{ fontSize: '9px', color: '#2a3060', fontVariantNumeric: 'tabular-nums' }}>{t.fee}</span>
-                        <span style={{ fontSize: '9px', color: statusColor, letterSpacing: '0.05em', textTransform: 'uppercase' }}>{t.status}</span>
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-            )}
-          </>
-        )}
+      {/* P&L Chart */}
+      <div className="px-5 pt-3 shrink-0">
+        <PnlChart curve={pnlCurve} currentDate={selectedDate} />
+      </div>
 
-        {!result && !running && (
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '200px' }}>
-            <span style={{ fontSize: '9px', color: '#0f1428', letterSpacing: '0.3em' }}>CONFIGURE AND RUN A BACKTEST</span>
+      {/* Trade log */}
+      <div className="flex flex-1 overflow-hidden gap-4 px-5 pt-3 pb-3">
+
+        {/* Today's trades */}
+        <div className="flex flex-col border border-border" style={{ width: '340px', minWidth: '280px' }}>
+          <div className="px-3 py-2 border-b border-border shrink-0">
+            <span className="text-[10px] text-text-muted tracking-widest">
+              RESOLVED ON {selectedDate || '--'} ({todayTrades.length})
+            </span>
           </div>
-        )}
+          <div className="flex-1 overflow-y-auto">
+            {todayTrades.length === 0 ? (
+              <div className="p-3 text-text-muted text-[10px] tracking-widest">NO TRADES THIS DATE</div>
+            ) : (
+              todayTrades.map((t) => <TradeCard key={t.pair_id} trade={t} />)
+            )}
+          </div>
+        </div>
+
+        {/* All resolved trades so far */}
+        <div className="flex flex-col flex-1 border border-border overflow-hidden">
+          <div className="px-3 py-2 border-b border-border shrink-0 flex items-center justify-between">
+            <span className="text-[10px] text-text-muted tracking-widest">ALL TRADES UP TO {selectedDate || '--'} ({visibleTrades.length})</span>
+            <span className={`text-xs font-bold ${currentPnl >= 0 ? 'text-green' : 'text-red'}`}>
+              CUMULATIVE: {currentPnl >= 0 ? '+' : ''}${currentPnl.toFixed(2)}
+            </span>
+          </div>
+          <div className="flex-1 overflow-y-auto">
+            {[...visibleTrades].reverse().map((t) => <TradeCard key={t.pair_id} trade={t} />)}
+          </div>
+        </div>
       </div>
     </div>
   );

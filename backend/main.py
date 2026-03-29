@@ -2,8 +2,9 @@
 from __future__ import annotations
 
 import os
+import re
 import sys
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Set
 
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, Query
@@ -11,20 +12,24 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from pymongo import MongoClient, DESCENDING
 
-# Make simulation package importable when running from backend/
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
-
-from simulation.run_backtest import run_backtest
-from simulation.analytics.reports import summary_dict
-from simulation.config import SimulationConfig
-from simulation.models import RealismMode
+try:
+    from simulation.run_backtest import run_backtest
+    from simulation.analytics.reports import summary_dict
+    from simulation.config import SimulationConfig
+    from simulation.models import RealismMode as SimRealismMode
+    _SIM_AVAILABLE = True
+except ImportError:
+    _SIM_AVAILABLE = False
 
 load_dotenv()
 
-MONGO_URI = os.getenv("MONGO_URI", "mongodb://localhost:27017")
-MONGO_DB = os.getenv("MONGO_DB", "prediction_markets")
+MONGO_URI = os.getenv("DATABASE_URL") or os.getenv("MONGO_URI", "mongodb://localhost:27017")
 SIMILARITY_THRESHOLD = float(os.getenv("SIMILARITY_THRESHOLD", "0.70"))
 EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "all-mpnet-base-v2")
+
+_SYSTEM_DBS = {"admin", "local", "config"}
+_PREFERRED_DBS = ["prediction_markets", "Arbit", "arbit", "arbsignal"]
 
 app = FastAPI(title="ARBX API")
 
@@ -36,13 +41,33 @@ app.add_middleware(
 )
 
 _client: Optional[MongoClient] = None
+_db_name: Optional[str] = None
+
+
+def _discover_db_name(client: MongoClient) -> str:
+    name = os.getenv("MONGO_DB") or os.getenv("MONGO_DATABASE")
+    if name:
+        return name
+    try:
+        available = set(client.list_database_names())
+        for preferred in _PREFERRED_DBS:
+            if preferred in available:
+                return preferred
+        for n in available:
+            if n not in _SYSTEM_DBS:
+                return n
+    except Exception:
+        pass
+    return "prediction_markets"
 
 
 def get_db():
-    global _client
+    global _client, _db_name
     if _client is None:
         _client = MongoClient(MONGO_URI, serverSelectionTimeoutMS=5000)
-    return _client[MONGO_DB]
+    if _db_name is None:
+        _db_name = _discover_db_name(_client)
+    return _client[_db_name]
 
 
 def db_status() -> str:
@@ -52,6 +77,73 @@ def db_status() -> str:
     except Exception:
         return "error"
 
+
+_STOPWORDS: Set[str] = {
+    "will", "the", "a", "an", "to", "of", "in", "by", "for", "on", "at", "or", "be", "is", "are",
+    "was", "were", "been", "being", "have", "has", "had", "do", "does", "did", "not", "no", "yes",
+    "before", "after", "end", "year", "than", "from", "with", "into", "any", "all", "can", "may",
+    "this", "that", "these", "those", "and", "but", "if", "when", "how", "what", "who", "which",
+}
+
+
+def _signal_word_set(text_a: str, text_b: str) -> Set[str]:
+    """Token set for diversity (cheap proxy for topic overlap)."""
+    combined = f"{text_a or ''} {text_b or ''}"
+    words = re.findall(r"[a-z0-9]+", combined.lower())
+    return {w for w in words if len(w) > 2 and w not in _STOPWORDS}
+
+
+def _jaccard(a: Set[str], b: Set[str]) -> float:
+    if not a and not b:
+        return 1.0
+    if not a or not b:
+        return 0.0
+    inter = len(a & b)
+    union = len(a | b)
+    return inter / union if union else 0.0
+
+
+def _diversify_signals_mmr(
+    docs: List[Dict[str, Any]],
+    limit: int,
+    diversity_lambda: float,
+) -> List[Dict[str, Any]]:
+    """Greedy MMR: balance expected_profit with dissimilarity to already-picked rows."""
+    if not docs or limit <= 0:
+        return []
+    n = len(docs)
+    evs = [float(d.get("expected_profit") or 0) for d in docs]
+    max_ev = max(evs) if evs else 1.0
+    if max_ev <= 0:
+        max_ev = 1.0
+    ev_norm = [e / max_ev for e in evs]
+    word_sets = [
+        _signal_word_set(str(d.get("text_a") or ""), str(d.get("text_b") or ""))
+        or {str(d.get("pair_id") or f"idx{i}")}
+        for i, d in enumerate(docs)
+    ]
+
+    selected: List[int] = [0]
+    remaining = set(range(1, n))
+
+    while len(selected) < limit and remaining:
+        best_i: Optional[int] = None
+        best_score = -1e18
+        for i in remaining:
+            redundancy = max(_jaccard(word_sets[i], word_sets[j]) for j in selected)
+            mmr = diversity_lambda * ev_norm[i] - (1.0 - diversity_lambda) * redundancy
+            if mmr > best_score:
+                best_score = mmr
+                best_i = i
+        if best_i is None:
+            break
+        selected.append(best_i)
+        remaining.discard(best_i)
+
+    return [docs[i] for i in selected]
+
+
+# ── Candidates (Phase 2) ──────────────────────────────────────────────────────
 
 @app.get("/api/candidates")
 def get_candidates(
@@ -74,67 +166,329 @@ def get_candidates(
         raise HTTPException(status_code=500, detail={"error": str(e)})
 
 
-@app.get("/api/questions")
-def get_questions(market: Optional[str] = Query(default=None)) -> List[Dict[str, Any]]:
+# ── Signals (Phase 4) ─────────────────────────────────────────────────────────
+
+@app.get("/api/signals")
+def get_signals(
+    min_ev: float = Query(default=0.0),
+    min_confidence: float = Query(default=0.0, ge=0.0, le=1.0),
+    limit: int = Query(default=200, ge=1, le=1000),
+    ranking: str = Query(
+        default="profit",
+        description="profit = pure EV order; diverse = MMR portfolio mix (topic spread)",
+    ),
+    diversity_lambda: float = Query(
+        default=0.65,
+        ge=0.0,
+        le=1.0,
+        description="Higher = weight EV more vs diversity (only when ranking=diverse)",
+    ),
+    pool_multiplier: int = Query(
+        default=6,
+        ge=2,
+        le=25,
+        description="Fetch up to limit×this many candidates before diversifying",
+    ),
+) -> List[Dict[str, Any]]:
     try:
         db = get_db()
-        query = {"market": market} if market else {}
-        projection = {"_id": 0, "id": 1, "text": 1, "market": 1, "price": 1}
-        return list(db["questions"].find(query, projection))
+        query: Dict[str, Any] = {}
+        if min_ev > 0:
+            query["expected_profit"] = {"$gte": min_ev}
+        if min_confidence > 0:
+            query["confidence"] = {"$gte": min_confidence}
+
+        use_diverse = ranking.strip().lower() == "diverse"
+        fetch_cap = min(1000, limit * pool_multiplier) if use_diverse else limit
+
+        docs = list(
+            db["signals"]
+            .find(query, {"_id": 0})
+            .sort("expected_profit", DESCENDING)
+            .limit(fetch_cap)
+        )
+        # Enrich with question text from candidate_pairs
+        pair_ids = [d["pair_id"] for d in docs if "pair_id" in d]
+        if pair_ids:
+            pairs = {
+                p["id"]: p
+                for p in db["candidate_pairs"].find(
+                    {"id": {"$in": pair_ids}},
+                    {"_id": 0, "id": 1, "text_a": 1, "text_b": 1},
+                )
+            }
+            for doc in docs:
+                p = pairs.get(doc.get("pair_id"), {})
+                doc["text_a"] = p.get("text_a", "")
+                doc["text_b"] = p.get("text_b", "")
+        if use_diverse and docs:
+            docs = _diversify_signals_mmr(docs, limit=limit, diversity_lambda=diversity_lambda)
+        elif len(docs) > limit:
+            docs = docs[:limit]
+        # Normalise datetime fields and enums
+        for doc in docs:
+            for k in ("created_at", "generated_at"):
+                if k in doc and hasattr(doc[k], "isoformat"):
+                    doc[k] = doc[k].isoformat()
+            for k in ("platform_a", "platform_b"):
+                if k in doc and not isinstance(doc[k], str):
+                    doc[k] = str(doc[k])
+            if "direction" in doc and not isinstance(doc["direction"], str):
+                doc["direction"] = str(doc["direction"])
+        return docs
     except Exception as e:
         raise HTTPException(status_code=500, detail={"error": str(e)})
 
 
-@app.get("/api/pipeline-status")
-def get_pipeline_status() -> Dict[str, Any]:
-    STEPS = [
-        (1, "SCRAPE", "Market Scraper"),
-        (2, "VECTOR DB", "Embedding & Vector DB"),
-        (3, "LLM VERIFY", "LLM Verifier"),
-        (4, "ARB CALC", "Arbitrage Calculator"),
-        (5, "TIMING", "Timing Localizer"),
-        (6, "SIM", "Simulator"),
-        (7, "DISP", "Display"),
-    ]
+@app.get("/api/signals/stats")
+def get_signals_stats() -> Dict[str, Any]:
     try:
         db = get_db()
-        stored: Dict[int, Any] = {}
-        logs: List[str] = []
-        last_run = None
-        total_runtime_ms = 0
-        try:
-            status_doc = db["pipeline_status"].find_one({}, {"_id": 0})
-            if status_doc:
-                stored = {s["number"]: s for s in status_doc.get("steps", [])}
-                logs = status_doc.get("logs", [])
-                last_run = status_doc.get("last_run")
-                total_runtime_ms = status_doc.get("total_runtime_ms", 0)
-                if last_run and hasattr(last_run, "isoformat"):
-                    last_run = last_run.isoformat()
-        except Exception:
-            pass
+        col = db["signals"]
+        total = col.count_documents({})
+        if total == 0:
+            return {"total": 0, "total_ev": 0, "top_ev": 0, "avg_confidence": 0, "avg_spread": 0}
 
-        steps = []
-        for number, short_label, full_label in STEPS:
-            s = stored.get(number, {})
-            steps.append({
-                "number": number,
-                "short_label": s.get("short_label", short_label),
-                "full_label": s.get("full_label", full_label),
-                "status": s.get("status", "pending"),
-                "elapsed_ms": s.get("elapsed_ms"),
-                "message": s.get("message"),
-            })
-
+        pipeline = [
+            {"$group": {
+                "_id": None,
+                "total_ev":       {"$sum": "$expected_profit"},
+                "top_ev":         {"$max": "$expected_profit"},
+                "avg_confidence": {"$avg": "$confidence"},
+                "avg_spread":     {"$avg": "$raw_spread"},
+            }}
+        ]
+        agg = list(col.aggregate(pipeline))
+        stats = agg[0] if agg else {}
         return {
-            "last_run": last_run,
-            "total_runtime_ms": total_runtime_ms,
-            "steps": steps,
-            "logs": logs[-20:],
+            "total":           total,
+            "total_ev":        round(stats.get("total_ev", 0), 2),
+            "top_ev":          round(stats.get("top_ev", 0), 2),
+            "avg_confidence":  round(stats.get("avg_confidence", 0), 4),
+            "avg_spread":      round(stats.get("avg_spread", 0), 4),
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail={"error": str(e)})
 
+
+# ── Validated opportunities (Phase 5) ────────────────────────────────────────
+
+@app.get("/api/validated")
+def get_validated(
+    executable_only: bool = Query(default=False),
+    limit: int = Query(default=100, ge=1, le=500),
+) -> List[Dict[str, Any]]:
+    try:
+        db = get_db()
+        query: Dict[str, Any] = {}
+        if executable_only:
+            query["executable"] = True
+        docs = list(
+            db["validated_opportunities"]
+            .find(query, {"_id": 0})
+            .sort("signal.expected_profit", DESCENDING)
+            .limit(limit)
+        )
+        return docs
+    except Exception as e:
+        raise HTTPException(status_code=500, detail={"error": str(e)})
+
+
+# ── Questions ─────────────────────────────────────────────────────────────────
+
+@app.get("/api/questions")
+def get_questions(market: Optional[str] = Query(default=None)) -> List[Dict[str, Any]]:
+    try:
+        db = get_db()
+        query = {"platform": market} if market else {}
+        projection = {"_id": 0, "market_id": 1, "question": 1, "platform": 1, "yes_price": 1}
+        docs = list(db["markets"].find(query, projection).limit(200))
+        # Normalise to frontend expected field names
+        return [
+            {"id": d.get("market_id", ""), "text": d.get("question", ""),
+             "market": d.get("platform", ""), "price": d.get("yes_price", 0.5)}
+            for d in docs
+        ]
+    except Exception as e:
+        raise HTTPException(status_code=500, detail={"error": str(e)})
+
+
+# ── Pipeline status ───────────────────────────────────────────────────────────
+
+@app.get("/api/pipeline-status")
+def get_pipeline_status() -> Dict[str, Any]:
+    STEPS = [
+        (1, "SCRAPE",    "Market Scraper"),
+        (2, "VECTOR DB", "Embedding & Vector DB"),
+        (3, "LLM VERIFY","LLM Verifier"),
+        (4, "ARB CALC",  "Arbitrage Calculator"),
+        (5, "TIMING",    "Timing Localizer"),
+        (6, "SIM",       "Simulator"),
+        (7, "DISP",      "Display"),
+    ]
+    try:
+        db = get_db()
+        # Derive live counts from actual collections
+        try:
+            n_candidates = db["candidate_pairs"].count_documents({})
+            n_signals    = db["signals"].count_documents({})
+            n_validated  = db["validated_opportunities"].count_documents({})
+            n_executable = db["validated_opportunities"].count_documents({"executable": True})
+        except Exception:
+            n_candidates = n_signals = n_validated = n_executable = 0
+
+        steps = [
+            {"number": 1, "short_label": "SCRAPE",    "full_label": "Market Scraper",         "status": "done"    if n_candidates > 0 else "pending", "elapsed_ms": None, "message": None},
+            {"number": 2, "short_label": "VECTOR DB", "full_label": "Embedding & Vector DB",  "status": "done"    if n_candidates > 0 else "pending", "elapsed_ms": None, "message": f"{n_candidates} candidate pairs"},
+            {"number": 3, "short_label": "LLM VERIFY","full_label": "LLM Verifier",           "status": "done"    if n_signals > 0    else "pending", "elapsed_ms": None, "message": None},
+            {"number": 4, "short_label": "ARB CALC",  "full_label": "Arbitrage Calculator",   "status": "done"    if n_signals > 0    else "pending", "elapsed_ms": None, "message": f"{n_signals} signals"},
+            {"number": 5, "short_label": "VALIDATE",  "full_label": "Live Validator",         "status": "done"    if n_validated > 0  else "pending", "elapsed_ms": None, "message": f"{n_executable} executable"},
+            {"number": 6, "short_label": "SIM",       "full_label": "Simulator",              "status": "pending", "elapsed_ms": None, "message": None},
+            {"number": 7, "short_label": "DISP",      "full_label": "Display",                "status": "pending", "elapsed_ms": None, "message": None},
+        ]
+        return {"last_run": None, "total_runtime_ms": 0, "steps": steps, "logs": []}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail={"error": str(e)})
+
+
+# ── Simulation (historical backtest) ─────────────────────────────────────────
+
+def _resolve_market(db, market_id: str) -> Optional[str]:
+    """Return 'YES', 'NO', or None from last price_history entry."""
+    doc = db["markets"].find_one(
+        {"market_id": market_id},
+        {"price_history": {"$slice": -1}, "yes_price": 1, "_id": 0},
+    )
+    if not doc:
+        return None
+    ph = doc.get("price_history") or []
+    last_price = ph[-1].get("yes_price") if ph else doc.get("yes_price")
+    if last_price is None:
+        return None
+    if last_price >= 0.8:
+        return "YES"
+    if last_price <= 0.2:
+        return "NO"
+    return None
+
+
+@app.get("/api/simulation/trades")
+def get_simulation_trades() -> List[Dict[str, Any]]:
+    """Return all signals enriched with resolution outcomes for backtesting."""
+    try:
+        db = get_db()
+        signals = list(db["signals"].find({}, {"_id": 0}))
+
+        # Build market lookup for end_dates
+        market_ids = set()
+        for s in signals:
+            market_ids.add(s.get("market_a_id", ""))
+            market_ids.add(s.get("market_b_id", ""))
+        market_ids.discard("")
+
+        markets = {
+            d["market_id"]: d
+            for d in db["markets"].find(
+                {"market_id": {"$in": list(market_ids)}},
+                {"market_id": 1, "end_date": 1, "price_history": {"$slice": -1}, "yes_price": 1, "_id": 0},
+            )
+        }
+
+        # Enrich signals with text
+        pair_ids = [s.get("pair_id") for s in signals if s.get("pair_id")]
+        pairs = {
+            p["id"]: p
+            for p in db["candidate_pairs"].find(
+                {"id": {"$in": pair_ids}},
+                {"_id": 0, "id": 1, "text_a": 1, "text_b": 1},
+            )
+        }
+
+        trades = []
+        for sig in signals:
+            ma = markets.get(sig.get("market_a_id", ""), {})
+            mb = markets.get(sig.get("market_b_id", ""), {})
+            pair = pairs.get(sig.get("pair_id", ""), {})
+
+            end_a = ma.get("end_date")
+            end_b = mb.get("end_date")
+            exit_date = str(end_a or end_b or "")[:10]
+
+            res_a = _resolve_market(db, sig.get("market_a_id", ""))
+            res_b = _resolve_market(db, sig.get("market_b_id", ""))
+
+            # Compute realized P&L
+            price_a = float(sig.get("price_a", 0.5))
+            price_b = float(sig.get("price_b", 0.5))
+            direction = sig.get("direction", "")
+            size = float(sig.get("recommended_size_usd", 100))
+            raw_spread = float(sig.get("raw_spread", 0))
+            realized_pnl = None
+            outcome = "UNKNOWN"
+
+            if res_a and res_b:
+                if res_a == res_b:
+                    outcome = "WIN"
+                    realized_pnl = round(raw_spread * size, 2)
+                else:
+                    outcome = "LOSS"
+                    if direction == "buy_b_sell_a":
+                        pnl_b = (1.0 - price_b) if res_b == "YES" else -price_b
+                        pnl_a = price_a if res_a == "NO" else -(1.0 - price_a)
+                    else:
+                        pnl_a = (1.0 - price_a) if res_a == "YES" else -price_a
+                        pnl_b = price_b if res_b == "NO" else -(1.0 - price_b)
+                    realized_pnl = round((pnl_a + pnl_b) * size, 2)
+
+            # Normalise datetimes/enums
+            for k in ("created_at", "generated_at"):
+                if k in sig and hasattr(sig[k], "isoformat"):
+                    sig[k] = sig[k].isoformat()
+            for k in ("platform_a", "platform_b", "direction"):
+                if k in sig and not isinstance(sig[k], str):
+                    sig[k] = str(sig[k])
+
+            trades.append({
+                **sig,
+                "text_a": pair.get("text_a", ""),
+                "text_b": pair.get("text_b", ""),
+                "exit_date": exit_date,
+                "resolution_a": res_a,
+                "resolution_b": res_b,
+                "outcome": outcome,
+                "realized_pnl": realized_pnl,
+            })
+
+        trades.sort(key=lambda t: t.get("exit_date") or "")
+        return trades
+    except Exception as e:
+        raise HTTPException(status_code=500, detail={"error": str(e)})
+
+
+@app.get("/api/simulation/pnl-curve")
+def get_simulation_pnl_curve() -> List[Dict[str, Any]]:
+    """Return daily cumulative P&L curve for the simulation chart."""
+    try:
+        trades = get_simulation_trades()
+        from collections import defaultdict
+        daily: Dict[str, float] = defaultdict(float)
+        for t in trades:
+            date = t.get("exit_date", "")
+            pnl = t.get("realized_pnl") or 0.0
+            if date:
+                daily[date] += pnl
+
+        cumulative = 0.0
+        curve = []
+        for date in sorted(daily.keys()):
+            cumulative += daily[date]
+            curve.append({"date": date, "daily_pnl": round(daily[date], 2), "cumulative_pnl": round(cumulative, 2)})
+        return curve
+    except Exception as e:
+        raise HTTPException(status_code=500, detail={"error": str(e)})
+
+
+# ── Simulation run (POST) ─────────────────────────────────────────────────────
 
 class SimRunRequest(BaseModel):
     realism_mode: str = "realistic"
@@ -143,45 +497,21 @@ class SimRunRequest(BaseModel):
 
 @app.post("/api/simulation/run")
 def run_simulation(req: SimRunRequest) -> Dict[str, Any]:
+    """Run a full backtest simulation and return summary + equity curve + trade log."""
+    if not _SIM_AVAILABLE:
+        raise HTTPException(status_code=501, detail={"error": "Simulation module not available"})
     try:
-        mode_map = {
-            "optimistic": RealismMode.OPTIMISTIC,
-            "realistic": RealismMode.REALISTIC,
-            "pessimistic": RealismMode.PESSIMISTIC,
-        }
-        realism = mode_map.get(req.realism_mode.lower(), RealismMode.REALISTIC)
-        config = SimulationConfig(
-            initial_capital=req.initial_capital,
-            realism_mode=realism,
-        )
-        result = run_backtest(config=config, verbose=False)
-        summary = summary_dict(result)
-        equity_curve = [
-            {"t": ts, "equity": eq}
-            for ts, eq in result.metrics.equity_curve
-        ]
-        trade_log = [
-            {
-                "market_id": f.market_id,
-                "platform": f.platform,
-                "side": f.side,
-                "price": round(f.fill_price, 4),
-                "size": round(f.fill_size, 2),
-                "status": f.status,
-                "fee": round(f.fee_paid, 4),
-                "timestamp": f.filled_at.isoformat() if f.filled_at else None,
-            }
-            for f in result.trade_log[:50]
-        ]
-        return {
-            "summary": summary,
-            "equity_curve": equity_curve,
-            "trade_log": trade_log,
-            "realism_mode": req.realism_mode,
-        }
+        mode = SimRealismMode(req.realism_mode)
+        cfg = SimulationConfig(realism_mode=mode, initial_capital=req.initial_capital)
+        result = run_backtest(cfg)
+        return summary_dict(result)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail={"error": str(e)})
     except Exception as e:
         raise HTTPException(status_code=500, detail={"error": str(e)})
 
+
+# ── Config ────────────────────────────────────────────────────────────────────
 
 @app.get("/api/config")
 def get_config() -> Dict[str, Any]:

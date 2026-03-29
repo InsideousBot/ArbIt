@@ -40,6 +40,56 @@ export interface PipelineStatus {
   logs: string[];
 }
 
+export type RealismMode = 'optimistic' | 'realistic' | 'pessimistic';
+
+export interface SimSummary {
+  start_time: string;
+  end_time: string;
+  run_duration_s: number;
+  events_processed: number;
+  realized_pnl: number;
+  unrealized_pnl: number;
+  fees_paid: number;
+  slippage_cost: number;
+  final_equity: number;
+  trades_attempted: number;
+  trades_filled: number;
+  partial_fills: number;
+  fill_rate: number;
+  win_rate: number;
+  avg_profit_per_trade: number;
+  avg_holding_hours: number;
+  max_locked_capital: number;
+  sharpe_ratio: number | null;
+  max_drawdown: number;
+  profit_by_arb_type: Record<string, number>;
+  open_baskets: number;
+  closed_baskets: number;
+}
+
+export interface EquityPoint {
+  t: string;
+  equity: number;
+}
+
+export interface TradeEntry {
+  market_id: string;
+  platform: string;
+  side: string;
+  price: number;
+  size: number;
+  status: string;
+  fee: number;
+  timestamp: string | null;
+}
+
+export interface SimResult {
+  summary: SimSummary;
+  equity_curve: EquityPoint[];
+  trade_log: TradeEntry[];
+  realism_mode: RealismMode;
+}
+
 export interface ArbitrageSignal {
   pair_id: string;
   platform_a: string;

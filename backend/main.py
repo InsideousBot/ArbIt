@@ -3,13 +3,24 @@ from __future__ import annotations
 
 import os
 import re
-from datetime import date as _date, timedelta
+import sys
 from typing import Any, Dict, List, Optional, Set
 
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
 from pymongo import MongoClient, DESCENDING
+
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+try:
+    from simulation.run_backtest import run_backtest
+    from simulation.analytics.reports import summary_dict
+    from simulation.config import SimulationConfig
+    from simulation.models import RealismMode as SimRealismMode
+    _SIM_AVAILABLE = True
+except ImportError:
+    _SIM_AVAILABLE = False
 
 load_dotenv()
 
@@ -25,7 +36,7 @@ app = FastAPI(title="ARBX API")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://localhost:5173", "http://localhost:3000", "*"],
-    allow_methods=["GET"],
+    allow_methods=["GET", "POST"],
     allow_headers=["*"],
 )
 
@@ -524,6 +535,29 @@ def get_simulation_pnl_curve() -> List[Dict[str, Any]]:
             curve.append({"date": ds, "daily_pnl": round(day_pnl, 2), "cumulative_pnl": round(cumulative, 2)})
             d += timedelta(days=1)
         return curve
+    except Exception as e:
+        raise HTTPException(status_code=500, detail={"error": str(e)})
+
+
+# ── Simulation run (POST) ─────────────────────────────────────────────────────
+
+class SimRunRequest(BaseModel):
+    realism_mode: str = "realistic"
+    initial_capital: float = 10000.0
+
+
+@app.post("/api/simulation/run")
+def run_simulation(req: SimRunRequest) -> Dict[str, Any]:
+    """Run a full backtest simulation and return summary + equity curve + trade log."""
+    if not _SIM_AVAILABLE:
+        raise HTTPException(status_code=501, detail={"error": "Simulation module not available"})
+    try:
+        mode = SimRealismMode(req.realism_mode)
+        cfg = SimulationConfig(realism_mode=mode, initial_capital=req.initial_capital)
+        result = run_backtest(cfg)
+        return summary_dict(result)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail={"error": str(e)})
     except Exception as e:
         raise HTTPException(status_code=500, detail={"error": str(e)})
 

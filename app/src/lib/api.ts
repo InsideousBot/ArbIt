@@ -1,4 +1,4 @@
-import type { ArbitrageSignal, CandidatePair, QuestionResponse, PipelineStatus, AppConfig, SignalsStats, SimTrade, PnlPoint } from './types';
+import type { CandidatePair, QuestionResponse, PipelineStatus, AppConfig, SimResult, RealismMode, ArbitrageSignal, SignalsStats, SimTrade, PnlPoint } from './types';
 
 const BASE = import.meta.env.VITE_API_URL ?? 'http://localhost:8000';
 
@@ -15,6 +15,19 @@ async function get<T>(path: string): Promise<T> {
   if (!res.ok) {
     const body = await res.json().catch(() => ({})) as { error?: string };
     throw new ApiError(res.status, body.error ?? res.statusText);
+  }
+  return res.json() as Promise<T>;
+}
+
+async function post<T>(path: string, body: unknown): Promise<T> {
+  const res = await fetch(`${BASE}${path}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    const b = await res.json().catch(() => ({})) as { detail?: { error?: string } };
+    throw new ApiError(res.status, b.detail?.error ?? res.statusText);
   }
   return res.json() as Promise<T>;
 }
@@ -43,4 +56,6 @@ export const api = {
     get<PnlPoint[]>('/api/simulation/pnl-curve'),
   getConfig: () =>
     get<AppConfig>('/api/config'),
+  runSimulation: (realism_mode: RealismMode, initial_capital: number) =>
+    post<SimResult>('/api/simulation/run', { realism_mode, initial_capital }),
 };

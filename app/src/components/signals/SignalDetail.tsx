@@ -10,79 +10,182 @@ const MARKET_LABEL: Record<string, string> = {
   kalshi: 'KALSHI',
   manifold: 'MANIFOLD',
 };
+const MARKET_GLOW: Record<string, string> = {
+  polymarket: '0 0 20px rgba(79,195,247,0.3)',
+  kalshi: '0 0 20px rgba(255,152,0,0.3)',
+  manifold: '0 0 20px rgba(167,139,250,0.3)',
+};
 
-interface SignalDetailProps {
-  signal: ArbitrageSignal | null;
-}
-
-function MarketCard({ market, text, price, marketId }: { market: string; text: string; price: number; marketId: string }) {
+function MarketCard({ market, text, price }: { market: string; text: string; price: number }) {
   const color = MARKET_COLOR[market] ?? '#94a3b8';
   const label = MARKET_LABEL[market] ?? market.toUpperCase();
+  const glow = MARKET_GLOW[market] ?? 'none';
+  const pct = Math.round(price * 100);
+
   return (
-    <div
-      className="flex-1 bg-surface border border-border p-4 flex flex-col gap-2"
-      style={{ borderLeftColor: color, borderLeftWidth: 2 }}
-    >
-      <span className="text-[9px] tracking-widest font-bold" style={{ color }}>◆ {label}</span>
-      <p className="text-sm text-text-primary leading-relaxed flex-1">{text || marketId}</p>
-      <span className="text-2xl font-bold" style={{ color }}>
-        {Math.round(price * 100)}¢
+    <div style={{
+      flex: 1,
+      background: 'linear-gradient(135deg, #070a14 0%, #060810 100%)',
+      border: '1px solid #0f1428',
+      borderLeft: `3px solid ${color}`,
+      padding: '16px',
+      display: 'flex',
+      flexDirection: 'column',
+      gap: '10px',
+      position: 'relative',
+      overflow: 'hidden',
+    }}>
+      {/* Subtle corner accent */}
+      <div style={{
+        position: 'absolute',
+        top: 0, right: 0,
+        width: '40px', height: '40px',
+        background: `linear-gradient(225deg, ${color}10, transparent)`,
+      }} />
+
+      {/* Platform label */}
+      <span style={{
+        fontSize: '8px',
+        fontWeight: '600',
+        color,
+        letterSpacing: '0.25em',
+        textShadow: glow,
+      }}>
+        ◆ {label}
       </span>
+
+      {/* Question text */}
+      <p style={{
+        margin: 0,
+        fontSize: '12px',
+        color: '#c0c8d8',
+        lineHeight: 1.6,
+        flex: 1,
+        letterSpacing: '0.01em',
+      }}>
+        {text}
+      </p>
+
+      {/* Probability */}
+      <div style={{ display: 'flex', alignItems: 'baseline', gap: '4px' }}>
+        <span style={{
+          fontSize: '48px',
+          fontWeight: '700',
+          color,
+          lineHeight: 1,
+          letterSpacing: '-0.04em',
+          textShadow: glow,
+          fontVariantNumeric: 'tabular-nums',
+        }}>
+          {pct}
+        </span>
+        <span style={{ fontSize: '18px', color, opacity: 0.7, fontWeight: '300' }}>%</span>
+      </div>
     </div>
   );
 }
 
-function StatBlock({ label, value, color }: { label: string; value: string; color?: string }) {
-  return (
-    <div className="flex flex-col items-center flex-1 border-r border-border last:border-r-0 py-3">
-      <span className={`text-sm font-bold ${color ?? 'text-text-secondary'}`}>{value}</span>
-      <span className="text-[9px] text-text-muted tracking-widest mt-1">{label}</span>
-    </div>
-  );
+export interface SignalDetailProps {
+  signal: ArbitrageSignal | null;
 }
 
 export default function SignalDetail({ signal }: SignalDetailProps) {
   if (!signal) {
     return (
-      <div className="flex-1 flex items-center justify-center">
-        <span className="text-text-muted text-xs tracking-widest animate-pulse">LOADING...</span>
+      <div style={{
+        flex: 1,
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        background: '#060810',
+      }}>
+        <span style={{ color: '#0f1428', fontSize: '9px', letterSpacing: '0.3em' }}>SELECT A SIGNAL</span>
       </div>
     );
   }
 
   const spread = Math.round(signal.raw_spread * 100);
-  const directionLabel = signal.direction === 'buy_a_sell_b'
-    ? `BUY ${(MARKET_LABEL[signal.platform_a] ?? signal.platform_a).split('').slice(0, 4).join('')} · SELL ${(MARKET_LABEL[signal.platform_b] ?? signal.platform_b).split('').slice(0, 4).join('')}`
-    : `BUY ${(MARKET_LABEL[signal.platform_b] ?? signal.platform_b).split('').slice(0, 4).join('')} · SELL ${(MARKET_LABEL[signal.platform_a] ?? signal.platform_a).split('').slice(0, 4).join('')}`;
 
   return (
-    <div className="flex-1 flex flex-col overflow-hidden">
-      <div className="flex items-center justify-between px-5 py-2 border-b border-border shrink-0">
-        <span className="text-[10px] text-text-muted tracking-[3px]">SIGNAL DETAIL</span>
-        <span className="text-2xl font-bold text-green">${signal.expected_profit.toFixed(2)} EV</span>
+    <div style={{
+      flex: 1,
+      display: 'flex',
+      flexDirection: 'column',
+      overflow: 'hidden',
+      background: '#060810',
+    }}>
+      {/* Header bar */}
+      <div style={{
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        padding: '0 20px',
+        height: '36px',
+        borderBottom: '1px solid #0a0d1a',
+        flexShrink: 0,
+      }}>
+        <span style={{ fontSize: '8px', color: '#1a2040', letterSpacing: '0.3em' }}>
+          SIGNAL DETAIL
+        </span>
+        <div style={{ display: 'flex', alignItems: 'baseline', gap: '6px' }}>
+          <span style={{ fontSize: '9px', color: '#1a2040', letterSpacing: '0.15em' }}>EV</span>
+          <span
+            className="glow-orange"
+            style={{
+              fontSize: '28px',
+              fontWeight: '700',
+              color: '#ff6b35',
+              letterSpacing: '-0.03em',
+              lineHeight: 1,
+              fontVariantNumeric: 'tabular-nums',
+            }}
+          >
+            ${signal.expected_profit.toFixed(2)}
+          </span>
+        </div>
       </div>
 
-      <div className="mx-5 mt-3 px-4 py-2 bg-surface border border-border text-[10px] tracking-wider text-text-secondary shrink-0">
-        ▶ {directionLabel} · PAIR {signal.pair_id.slice(0, 12).toUpperCase()}
+      {/* Market cards */}
+      <div style={{
+        display: 'flex',
+        gap: '12px',
+        padding: '16px 20px',
+        flexShrink: 0,
+      }}>
+        <MarketCard market={signal.platform_a} text={signal.text_a} price={signal.price_a} />
+        <MarketCard market={signal.platform_b} text={signal.text_b} price={signal.price_b} />
       </div>
 
-      <div className="flex gap-4 px-5 pt-4 shrink-0">
-        <MarketCard market={signal.platform_a} text={signal.text_a} price={signal.price_a} marketId={signal.market_a_id} />
-        <MarketCard market={signal.platform_b} text={signal.text_b} price={signal.price_b} marketId={signal.market_b_id} />
-      </div>
-
-      <div className="flex mx-5 mt-4 border border-border bg-surface shrink-0">
-        <StatBlock label="EXP PROFIT" value={`$${signal.expected_profit.toFixed(2)}`} color="text-green" />
-        <StatBlock label="SPREAD" value={`+${spread}pp`} color="text-green" />
-        <StatBlock label="CONFIDENCE" value={`${(signal.confidence * 100).toFixed(1)}%`} color="text-orange" />
-        <StatBlock label="KELLY" value={`${(signal.kelly_fraction * 100).toFixed(2)}%`} />
-      </div>
-
-      <div className="flex mx-5 mt-2 border border-border bg-surface shrink-0">
-        <StatBlock label="REC SIZE" value={`$${signal.recommended_size_usd.toFixed(0)}`} color="text-orange" />
-        <StatBlock label="CONV PROB" value={`${(signal.regression_convergence_prob * 100).toFixed(1)}%`} />
-        <StatBlock label="PLATFORM A" value={signal.platform_a.toUpperCase()} />
-        <StatBlock label="PLATFORM B" value={signal.platform_b.toUpperCase()} />
+      {/* Stats strip */}
+      <div style={{
+        display: 'flex',
+        margin: '0 20px',
+        border: '1px solid #0a0d1a',
+        background: '#040608',
+        flexShrink: 0,
+      }}>
+        {[
+          { label: 'CONFIDENCE', value: (signal.confidence * 100).toFixed(1) + '%', color: '#ff6b35', glow: 'glow-orange' },
+          { label: 'PRICE SPREAD', value: `+${spread}pp`, color: '#00e676', glow: 'glow-green' },
+          { label: 'KELLY SIZE', value: `$${signal.recommended_size_usd.toFixed(0)}`, color: '#4fc3f7', glow: '' },
+          { label: 'CONV. PROB', value: (signal.regression_convergence_prob * 100).toFixed(1) + '%', color: '#2a3060', glow: '' },
+        ].map(({ label, value, color, glow }, i) => (
+          <div key={i} style={{
+            flex: 1,
+            display: 'flex',
+            flexDirection: 'column',
+            alignItems: 'center',
+            padding: '10px 0',
+            borderRight: i < 3 ? '1px solid #0a0d1a' : 'none',
+          }}>
+            <span className={glow} style={{ fontSize: '13px', fontWeight: '500', color, letterSpacing: '-0.01em' }}>
+              {value}
+            </span>
+            <span style={{ fontSize: '7px', color: '#1a2040', letterSpacing: '0.2em', marginTop: '3px' }}>
+              {label}
+            </span>
+          </div>
+        ))}
       </div>
     </div>
   );

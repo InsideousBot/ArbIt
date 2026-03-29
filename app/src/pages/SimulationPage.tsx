@@ -132,7 +132,7 @@ export default function SimulationPage() {
   const [error, setError] = useState<string | null>(null);
 
   const [playing, setPlaying] = useState(false);
-  const [speed, setSpeed] = useState(5);
+  const [speed, setSpeed] = useState(1);
   const [currentIdx, setCurrentIdx] = useState(0);
   const [selectedDate, setSelectedDate] = useState<string>('');
 

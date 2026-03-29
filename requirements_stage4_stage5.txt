@@ -1,0 +1,14 @@
+# External Python dependencies needed for the tightened Stage 4 and Stage 5 packages
+# Install with:
+#   pip install -r requirements_stage4_stage5.txt
+#
+# Notes:
+# - backend.common.* and backend.stage1_ingestion.* are internal project modules,
+#   not pip-installable packages.
+# - dataclasses and datetime are from the Python standard library.
+# - scikit-learn pulls in scipy, joblib, and threadpoolctl automatically.
+
+numpy>=1.24
+scikit-learn>=1.3
+httpx>=0.27
+loguru>=0.7

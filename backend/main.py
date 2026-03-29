@@ -435,8 +435,10 @@ def _build_simulation_trades(db, as_of_date: Optional[str] = None) -> List[Dict[
             if k in sig and not isinstance(sig[k], str):
                 sig[k] = str(sig[k])
 
-        # entry_date: discovered ENTRY_LOOKBACK days before expiry
-        if exit_date:
+        # entry_date: use seeder override if present, otherwise ENTRY_LOOKBACK before expiry
+        if sig.get("_entry_date_override"):
+            entry_date = sig["_entry_date_override"]
+        elif exit_date:
             try:
                 entry_date = (_date.fromisoformat(exit_date) - timedelta(days=_SIM_ENTRY_LOOKBACK)).isoformat()
             except ValueError:

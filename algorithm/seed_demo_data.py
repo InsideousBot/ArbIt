@@ -357,14 +357,16 @@ def seed(db) -> None:
             var_spread = round(max(0.02, pt["spread"] + rng.gauss(0, 0.012)), 3)
             var_price_a = round(max(0.05, min(0.95, pt["k_start"] + rng.gauss(0, 0.03))), 3)
             var_price_b = round(max(0.05, min(0.95, pt["p_start"] + rng.gauss(0, 0.03))), 3)
-            # Stagger exit dates evenly
+            # Stagger exit dates evenly across the year
             day_offset = ((i * 5 + variant) * 365 // 500) % 365
-            exit_date = (YEAR_AGO + timedelta(days=day_offset + rng.randint(0, 3))).isoformat()
+            exit_date_obj = YEAR_AGO + timedelta(days=day_offset + rng.randint(0, 3))
+            exit_date = exit_date_obj.isoformat()
+            # Variable holding period: 7–45 days (triangular, mode=21)
+            holding_days = int(rng.triangular(7, 45, 21))
+            entry_date = (exit_date_obj - timedelta(days=holding_days)).isoformat()
             size = round(rng.triangular(100, 800, 350), 0)
             ev = round(var_spread * size * rng.uniform(0.85, 1.05), 2)
             conf = round(rng.triangular(0.62, 0.96, 0.82), 3)
-            pair_id = f"demo-pair-{i+1:05d}" if variant == 0 else f"demo-near-{(i*5+variant):06d}"
-            # Always reference the real market ids for trade enrichment
             sig_id = f"sig-{i+1:04d}-v{variant}"
             signal_docs.append({
                 "_demo": True,
@@ -383,9 +385,9 @@ def seed(db) -> None:
                 "confidence": conf,
                 "kelly_fraction": round(conf * var_spread * 2, 4),
                 "regression_convergence_prob": round(rng.uniform(0.60, 0.92), 3),
-                "generated_at": (YEAR_AGO + timedelta(days=day_offset)).isoformat(),
-                # Store exit_date directly so backend can use it for simulation
+                "generated_at": entry_date,
                 "_exit_date_override": exit_date,
+                "_entry_date_override": entry_date,
             })
 
     for chunk_start in range(0, len(signal_docs), 500):

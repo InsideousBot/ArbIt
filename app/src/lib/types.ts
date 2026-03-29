@@ -119,6 +119,7 @@ export interface SignalsStats {
 }
 
 export interface SimTrade {
+  signal_id: string;
   pair_id: string;
   platform_a: string;
   platform_b: string;
@@ -133,6 +134,7 @@ export interface SimTrade {
   expected_profit: number;
   recommended_size_usd: number;
   confidence: number;
+  entry_date: string;
   exit_date: string;
   resolution_a: string | null;
   resolution_b: string | null;

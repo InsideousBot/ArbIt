@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import re
+from datetime import date, datetime
 from typing import Dict, List, Optional, Tuple
 
 import numpy as np
@@ -21,6 +22,21 @@ _NEGATION_TOKENS = frozenset([
     "nor", "refuse", "refuses", "refused", "against",
     "lose", "loses", "lost",
 ])
+
+
+def _parse_close_time(q: MarketQuestion) -> Optional[date]:
+    """Extract the market closing date from question metadata, if present."""
+    raw = (
+        q.metadata.get("close_time")
+        or q.metadata.get("end_date")
+        or q.metadata.get("close_date")
+    )
+    if not raw:
+        return None
+    try:
+        return datetime.fromisoformat(str(raw).replace("Z", "+00:00")).date()
+    except Exception:
+        return None
 
 
 def _detect_negation(text_a: str, text_b: str) -> Tuple[bool, List[str]]:
@@ -59,15 +75,20 @@ class CandidateFinder:
         self,
         embedder: Optional[Embedder] = None,
         similarity_threshold: float = 0.85,
+        date_tolerance_days: int = 90,
     ) -> None:
         """
         Args:
             embedder: Embedder to use. Defaults to TransformerEmbedder (all-mpnet-base-v2).
             similarity_threshold: Minimum cosine similarity to include a pair [0, 1].
                                   Every pair above this threshold is returned — no cap.
+            date_tolerance_days: Max allowed gap (days) between market close dates.
+                                 Pairs where both dates are parseable and the gap exceeds
+                                 this are dropped before Phase 3.
         """
         self._embedder = embedder or TransformerEmbedder()
         self.similarity_threshold = similarity_threshold
+        self.date_tolerance_days = date_tolerance_days
 
     def find_candidates(
         self,
@@ -114,6 +135,12 @@ class CandidateFinder:
             score = float(sim_matrix[i, j])
             q_a = questions_a[i]
             q_b = questions_b[j]
+
+            # Date pre-filter: skip pairs where both close dates are known and too far apart
+            d_a = _parse_close_time(q_a)
+            d_b = _parse_close_time(q_b)
+            if d_a and d_b and abs((d_a - d_b).days) > self.date_tolerance_days:
+                continue
 
             has_neg, neg_tokens = _detect_negation(q_a.text, q_b.text)
             pair_id = hashlib.sha256(

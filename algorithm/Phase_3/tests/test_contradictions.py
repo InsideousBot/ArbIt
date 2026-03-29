@@ -68,9 +68,10 @@ class TestCheckContradictions:
         a = _market("a", "Will Bitcoin reach $100,000?")
         b = _market("b", "Will Bitcoin reach $200,000?")
         result = _check(a, b)
-        # Thresholds differ by 100% — should flag
-        assert result.hard_reject
+        # Thresholds differ by 100% — soft flag only, LLM decides
         assert any("threshold_mismatch" in f for f in result.flags)
+        # threshold_mismatch alone must NOT hard-reject (unit differences cause false positives)
+        assert not result.hard_reject
 
     def test_threshold_mismatch_within_5pct(self) -> None:
         """Small threshold variation (≤ 5%) should not reject."""

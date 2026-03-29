@@ -83,7 +83,10 @@ export interface SimTrade {
   expected_profit: number;
   recommended_size_usd: number;
   confidence: number;
+  entry_date: string;
   exit_date: string;
+  end_date_a: string | null;
+  end_date_b: string | null;
   resolution_a: string | null;
   resolution_b: string | null;
   outcome: 'WIN' | 'LOSS' | 'UNKNOWN';

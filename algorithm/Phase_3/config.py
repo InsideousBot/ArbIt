@@ -28,7 +28,7 @@ class Phase3Config(BaseModel):
     database_url: str = Field(default="postgresql://localhost:5432/arbit")
 
     # Phase 3 tuning
-    date_tolerance_days: int = Field(default=30)
+    date_tolerance_days: int = Field(default=45)
     entity_match_threshold: float = Field(default=0.85)
     llm_rate_limit_rps: float = Field(default=5.0)
     enable_cache: bool = Field(default=False)
@@ -47,7 +47,7 @@ def get_config() -> Phase3Config:
         deepseek_max_retries=int(os.getenv("DEEPSEEK_MAX_RETRIES", "3")),
         openai_api_key=os.getenv("OPENAI_API_KEY", ""),
         database_url=os.getenv("DATABASE_URL", "postgresql://localhost:5432/arbit"),
-        date_tolerance_days=int(os.getenv("PHASE3_DATE_TOLERANCE_DAYS", "30")),
+        date_tolerance_days=int(os.getenv("PHASE3_DATE_TOLERANCE_DAYS", "45")),
         entity_match_threshold=float(os.getenv("PHASE3_ENTITY_MATCH_THRESHOLD", "0.85")),
         llm_rate_limit_rps=float(os.getenv("PHASE3_LLM_RATE_LIMIT_RPS", "5")),
         enable_cache=os.getenv("PHASE3_ENABLE_CACHE", "false").lower() == "true",

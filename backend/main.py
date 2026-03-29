@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import os
 import re
+from datetime import date as _date, timedelta
 from typing import Any, Dict, List, Optional, Set
 
 from dotenv import load_dotenv
@@ -341,14 +342,8 @@ def get_pipeline_status() -> Dict[str, Any]:
 
 # ── Simulation (historical backtest) ─────────────────────────────────────────
 
-def _resolve_market(db, market_id: str) -> Optional[str]:
-    """Return 'YES', 'NO', or None from last price_history entry."""
-    doc = db["markets"].find_one(
-        {"market_id": market_id},
-        {"price_history": {"$slice": -1}, "yes_price": 1, "_id": 0},
-    )
-    if not doc:
-        return None
+def _price_to_resolution(doc: Dict[str, Any]) -> Optional[str]:
+    """Derive YES/NO resolution from last price_history entry or current yes_price."""
     ph = doc.get("price_history") or []
     last_price = ph[-1].get("yes_price") if ph else doc.get("yes_price")
     if last_price is None:
@@ -360,117 +355,162 @@ def _resolve_market(db, market_id: str) -> Optional[str]:
     return None
 
 
+_SIM_ENTRY_LOOKBACK = 30  # days before market expiry to "discover" the opportunity
+
+
+def _build_simulation_trades(db, as_of_date: Optional[str] = None) -> List[Dict[str, Any]]:
+    """Core logic: build enriched trade list for backtest simulation (single batched query)."""
+    signals = list(db["signals"].find({}, {"_id": 0}))
+
+    # Collect all referenced market ids
+    market_ids: set = set()
+    for s in signals:
+        market_ids.add(s.get("market_a_id", ""))
+        market_ids.add(s.get("market_b_id", ""))
+    market_ids.discard("")
+
+    # Single batched fetch for all markets (end_date + last price snapshot)
+    markets = {
+        d["market_id"]: d
+        for d in db["markets"].find(
+            {"market_id": {"$in": list(market_ids)}},
+            {"market_id": 1, "end_date": 1, "price_history": {"$slice": -1}, "yes_price": 1, "_id": 0},
+        )
+    }
+
+    # Enrich signals with question text from candidate_pairs
+    pair_ids = [s.get("pair_id") for s in signals if s.get("pair_id")]
+    pairs = {
+        p["id"]: p
+        for p in db["candidate_pairs"].find(
+            {"id": {"$in": pair_ids}},
+            {"_id": 0, "id": 1, "text_a": 1, "text_b": 1},
+        )
+    }
+
+    backtest_start = (_date.today() - timedelta(days=365)).isoformat()
+    trades: List[Dict[str, Any]] = []
+
+    for sig in signals:
+        ma = markets.get(sig.get("market_a_id", ""), {})
+        mb = markets.get(sig.get("market_b_id", ""), {})
+        pair = pairs.get(sig.get("pair_id", ""), {})
+
+        end_a = ma.get("end_date")
+        end_b = mb.get("end_date")
+        end_date_a = str(end_a or "")[:10] or None
+        end_date_b = str(end_b or "")[:10] or None
+        exit_date = str(end_a or end_b or "")[:10]
+
+        # Resolve from batched market data (no extra round-trips)
+        res_a = _price_to_resolution(ma) if ma else None
+        res_b = _price_to_resolution(mb) if mb else None
+
+        # Realized P&L
+        price_a = float(sig.get("price_a", 0.5))
+        price_b = float(sig.get("price_b", 0.5))
+        direction = sig.get("direction", "")
+        size = float(sig.get("recommended_size_usd", 100))
+        raw_spread = float(sig.get("raw_spread", 0))
+        realized_pnl = None
+        outcome = "UNKNOWN"
+
+        if res_a and res_b:
+            if res_a == res_b:
+                outcome = "WIN"
+                realized_pnl = round(raw_spread * size, 2)
+            else:
+                outcome = "LOSS"
+                if direction == "buy_b_sell_a":
+                    pnl_b = (1.0 - price_b) if res_b == "YES" else -price_b
+                    pnl_a = price_a if res_a == "NO" else -(1.0 - price_a)
+                else:
+                    pnl_a = (1.0 - price_a) if res_a == "YES" else -price_a
+                    pnl_b = price_b if res_b == "NO" else -(1.0 - price_b)
+                realized_pnl = round((pnl_a + pnl_b) * size, 2)
+
+        # Normalise datetimes/enums
+        for k in ("created_at", "generated_at"):
+            if k in sig and hasattr(sig[k], "isoformat"):
+                sig[k] = sig[k].isoformat()
+        for k in ("platform_a", "platform_b", "direction"):
+            if k in sig and not isinstance(sig[k], str):
+                sig[k] = str(sig[k])
+
+        # entry_date: discovered ENTRY_LOOKBACK days before expiry
+        if exit_date:
+            try:
+                entry_date = (_date.fromisoformat(exit_date) - timedelta(days=_SIM_ENTRY_LOOKBACK)).isoformat()
+            except ValueError:
+                entry_date = backtest_start
+        else:
+            entry_date = backtest_start
+
+        trades.append({
+            **sig,
+            "text_a": pair.get("text_a", ""),
+            "text_b": pair.get("text_b", ""),
+            "exit_date": exit_date,
+            "entry_date": entry_date,
+            "end_date_a": end_date_a,
+            "end_date_b": end_date_b,
+            "resolution_a": res_a,
+            "resolution_b": res_b,
+            "outcome": outcome,
+            "realized_pnl": realized_pnl,
+        })
+
+    if as_of_date:
+        trades = [
+            t for t in trades
+            if (t.get("end_date_a") or "9999") >= as_of_date
+            and (t.get("end_date_b") or "9999") >= as_of_date
+        ]
+
+    trades.sort(key=lambda t: t.get("exit_date") or "")
+    return trades
+
+
 @app.get("/api/simulation/trades")
-def get_simulation_trades() -> List[Dict[str, Any]]:
+def get_simulation_trades(
+    as_of_date: Optional[str] = Query(default=None, description="ISO date (YYYY-MM-DD); only show trades where both markets were still open on this date"),
+) -> List[Dict[str, Any]]:
     """Return all signals enriched with resolution outcomes for backtesting."""
     try:
-        db = get_db()
-        signals = list(db["signals"].find({}, {"_id": 0}))
-
-        # Build market lookup for end_dates
-        market_ids = set()
-        for s in signals:
-            market_ids.add(s.get("market_a_id", ""))
-            market_ids.add(s.get("market_b_id", ""))
-        market_ids.discard("")
-
-        markets = {
-            d["market_id"]: d
-            for d in db["markets"].find(
-                {"market_id": {"$in": list(market_ids)}},
-                {"market_id": 1, "end_date": 1, "price_history": {"$slice": -1}, "yes_price": 1, "_id": 0},
-            )
-        }
-
-        # Enrich signals with text
-        pair_ids = [s.get("pair_id") for s in signals if s.get("pair_id")]
-        pairs = {
-            p["id"]: p
-            for p in db["candidate_pairs"].find(
-                {"id": {"$in": pair_ids}},
-                {"_id": 0, "id": 1, "text_a": 1, "text_b": 1},
-            )
-        }
-
-        trades = []
-        for sig in signals:
-            ma = markets.get(sig.get("market_a_id", ""), {})
-            mb = markets.get(sig.get("market_b_id", ""), {})
-            pair = pairs.get(sig.get("pair_id", ""), {})
-
-            end_a = ma.get("end_date")
-            end_b = mb.get("end_date")
-            exit_date = str(end_a or end_b or "")[:10]
-
-            res_a = _resolve_market(db, sig.get("market_a_id", ""))
-            res_b = _resolve_market(db, sig.get("market_b_id", ""))
-
-            # Compute realized P&L
-            price_a = float(sig.get("price_a", 0.5))
-            price_b = float(sig.get("price_b", 0.5))
-            direction = sig.get("direction", "")
-            size = float(sig.get("recommended_size_usd", 100))
-            raw_spread = float(sig.get("raw_spread", 0))
-            realized_pnl = None
-            outcome = "UNKNOWN"
-
-            if res_a and res_b:
-                if res_a == res_b:
-                    outcome = "WIN"
-                    realized_pnl = round(raw_spread * size, 2)
-                else:
-                    outcome = "LOSS"
-                    if direction == "buy_b_sell_a":
-                        pnl_b = (1.0 - price_b) if res_b == "YES" else -price_b
-                        pnl_a = price_a if res_a == "NO" else -(1.0 - price_a)
-                    else:
-                        pnl_a = (1.0 - price_a) if res_a == "YES" else -price_a
-                        pnl_b = price_b if res_b == "NO" else -(1.0 - price_b)
-                    realized_pnl = round((pnl_a + pnl_b) * size, 2)
-
-            # Normalise datetimes/enums
-            for k in ("created_at", "generated_at"):
-                if k in sig and hasattr(sig[k], "isoformat"):
-                    sig[k] = sig[k].isoformat()
-            for k in ("platform_a", "platform_b", "direction"):
-                if k in sig and not isinstance(sig[k], str):
-                    sig[k] = str(sig[k])
-
-            trades.append({
-                **sig,
-                "text_a": pair.get("text_a", ""),
-                "text_b": pair.get("text_b", ""),
-                "exit_date": exit_date,
-                "resolution_a": res_a,
-                "resolution_b": res_b,
-                "outcome": outcome,
-                "realized_pnl": realized_pnl,
-            })
-
-        trades.sort(key=lambda t: t.get("exit_date") or "")
-        return trades
+        return _build_simulation_trades(get_db(), as_of_date=as_of_date)
     except Exception as e:
         raise HTTPException(status_code=500, detail={"error": str(e)})
 
 
 @app.get("/api/simulation/pnl-curve")
 def get_simulation_pnl_curve() -> List[Dict[str, Any]]:
-    """Return daily cumulative P&L curve for the simulation chart."""
+    """Return a continuous 365-day cumulative P&L curve from backtest start to today."""
     try:
-        trades = get_simulation_trades()
         from collections import defaultdict
+        db = get_db()
+        trades = _build_simulation_trades(db)
         daily: Dict[str, float] = defaultdict(float)
+        backtest_start = _date.today() - timedelta(days=365)
+        backtest_start_s = backtest_start.isoformat()
         for t in trades:
-            date = t.get("exit_date", "")
+            exit_d = t.get("exit_date", "")
             pnl = t.get("realized_pnl") or 0.0
-            if date:
-                daily[date] += pnl
+            if exit_d:
+                # Clamp pre-backtest resolutions onto day 1
+                eff_date = exit_d if exit_d >= backtest_start_s else backtest_start_s
+                daily[eff_date] += pnl
 
+        # Generate continuous daily range (one point per calendar day)
         cumulative = 0.0
         curve = []
-        for date in sorted(daily.keys()):
-            cumulative += daily[date]
-            curve.append({"date": date, "daily_pnl": round(daily[date], 2), "cumulative_pnl": round(cumulative, 2)})
+        d = backtest_start
+        today = _date.today()
+        while d <= today:
+            ds = d.isoformat()
+            day_pnl = daily.get(ds, 0.0)
+            cumulative += day_pnl
+            curve.append({"date": ds, "daily_pnl": round(day_pnl, 2), "cumulative_pnl": round(cumulative, 2)})
+            d += timedelta(days=1)
         return curve
     except Exception as e:
         raise HTTPException(status_code=500, detail={"error": str(e)})

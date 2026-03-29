@@ -36,6 +36,9 @@ openai = "^1.59"
 sentence-transformers = "^5.1"
 pymongo = "^4.14"
 
+# Phase 4 — regression model
+scikit-learn = "^1.5"
+
 # Phase 5 — scheduling
 apscheduler = "^3.10"
 
@@ -72,4 +75,4 @@ asyncio_mode = "auto"
 markers = [
     "slow: tests that require model downloads or heavier integration setup",
 ]
-testpaths = ["tests", "algorithm/Phase_2/tests", "algorithm/Phase_3/tests", "simulation/tests"]
+testpaths = ["tests", "algorithm/Phase_2/tests", "algorithm/Phase_3/tests", "algorithm/Phase_4/tests", "algorithm/Phase_5/tests", "simulation/tests"]

@@ -3,309 +3,146 @@ import { useState, useEffect } from 'react'
 import { useCounter } from '@/lib/useCounter'
 import { EXECUTIONS } from '@/lib/mockData'
 
-function StatCard({
-  label,
-  value,
-  color,
-  borderColor,
-  prefix = '',
-  suffix = '',
-}: {
-  label: string
-  value: string
-  color: string
-  borderColor: string
-  prefix?: string
-  suffix?: string
-}) {
+const MONO = 'JetBrains Mono, monospace'
+const SANS = 'Inter, sans-serif'
+
+function StatCard({ label, value, valueColor = '#fff' }: { label: string; value: string; valueColor?: string }) {
   return (
-    <div
-      style={{
-        background: '#111827',
-        borderTop: `2px solid ${borderColor}`,
-        border: `1px solid #1C2333`,
-        borderTopColor: borderColor,
-        flex: 1,
-        padding: '12px 16px',
-        borderRadius: 0,
-      }}
-    >
-      <div
-        style={{
-          fontFamily: 'JetBrains Mono, monospace',
-          fontSize: 9,
-          color: '#6B7688',
-          letterSpacing: '0.12em',
-          marginBottom: 6,
-        }}
-      >
+    <div style={{
+      flex: 1,
+      background: '#0A0A0A',
+      border: '1px solid #1A1A1A',
+      padding: '14px 18px',
+    }}>
+      <div style={{ fontFamily: SANS, fontSize: 10, fontWeight: 600, color: '#888', letterSpacing: '0.14em', textTransform: 'uppercase', marginBottom: 8 }}>
         {label}
       </div>
-      <div
-        className={color === '#00FF88' ? 'glow-green' : color === '#F59E0B' ? 'glow-amber' : ''}
-        style={{
-          fontFamily: 'JetBrains Mono, monospace',
-          fontSize: 28,
-          fontWeight: 700,
-          color,
-          lineHeight: 1,
-        }}
-      >
-        {prefix}{value}{suffix}
+      <div style={{ fontFamily: MONO, fontSize: 28, fontWeight: 700, color: valueColor, lineHeight: 1, fontVariantNumeric: 'tabular-nums' }}>
+        {value}
       </div>
     </div>
   )
 }
 
+function StatusPill({ status }: { status: string }) {
+  const map: Record<string, { color: string; bg: string; label: string }> = {
+    CONFIRMED: { color: '#00FF88', bg: 'rgba(0,255,136,0.08)',  label: '● CONFIRMED' },
+    PENDING:   { color: '#FFB800', bg: 'rgba(255,184,0,0.08)',  label: '◌ PENDING'  },
+    FAILED:    { color: '#FF3355', bg: 'rgba(255,51,85,0.08)',  label: '✕ FAILED'   },
+  }
+  const s = map[status] ?? map.FAILED
+  return (
+    <span style={{
+      fontFamily: MONO, fontSize: 10, fontWeight: 600,
+      color: s.color, background: s.bg,
+      border: `1px solid ${s.color}33`,
+      borderRadius: 3, padding: '3px 8px', letterSpacing: '0.08em',
+    }}>
+      {s.label}
+    </span>
+  )
+}
+
+const COLS = ['TIME', 'EVENT', 'POLY SIDE', 'KALSHI SIDE', 'SPREAD', 'NET P&L', 'STATUS']
+
 export default function ExecutionLog() {
   const confirmed = EXECUTIONS.filter((e) => e.status === 'CONFIRMED')
-  const initialProfit = confirmed.reduce((sum, e) => sum + e.netPnl, 0)
-  const [profitTarget, setProfitTarget] = useState(initialProfit)
+  const [profitTarget, setProfitTarget] = useState(confirmed.reduce((s, e) => s + e.netPnl, 0))
   const animatedProfit = useCounter(profitTarget, 800)
 
   useEffect(() => {
-    const interval = setInterval(() => {
-      setProfitTarget((p) => p + Math.random() * 8 + 1)
-    }, 5000)
-    return () => clearInterval(interval)
+    const t = setInterval(() => setProfitTarget((p) => p + Math.random() * 8 + 1), 5000)
+    return () => clearInterval(t)
   }, [])
 
   const totalTrades = EXECUTIONS.length
   const successRate = ((confirmed.length / totalTrades) * 100).toFixed(1)
-  const successColor = parseFloat(successRate) > 80 ? '#00FF88' : '#F59E0B'
 
   return (
     <div>
-      {/* Header */}
-      <div
-        className="flex items-center gap-3 mb-4 pb-3"
-        style={{ borderBottom: '1px solid #1C2333' }}
-      >
-        <h2
-          className="text-sm font-bold tracking-widest"
-          style={{ fontFamily: 'Syne, sans-serif', color: '#E8EDF5', letterSpacing: '0.2em' }}
-        >
+      {/* Sticky header */}
+      <div style={{
+        display: 'flex', alignItems: 'center', gap: 12,
+        padding: '14px 20px 12px',
+        borderBottom: '1px solid #1A1A1A',
+        background: '#000',
+        position: 'sticky', top: 0, zIndex: 10,
+      }}>
+        <span style={{ fontFamily: SANS, fontSize: 13, fontWeight: 700, color: '#fff', letterSpacing: '0.01em' }}>
           EXECUTION LOG
-        </h2>
-        <span
-          className="px-1.5 py-0.5 text-[9px]"
-          style={{
-            fontFamily: 'JetBrains Mono, monospace',
-            background: 'rgba(0,255,136,0.08)',
-            color: '#00FF88',
-            border: '1px solid rgba(0,255,136,0.3)',
-            borderRadius: 0,
-            letterSpacing: '0.06em',
-          }}
-        >
-          {totalTrades} TRADES
+        </span>
+        <span style={{
+          fontFamily: MONO, fontSize: 11,
+          background: '#111', color: '#888',
+          borderRadius: 3, padding: '1px 7px',
+          border: '1px solid #1A1A1A',
+        }}>
+          {totalTrades} trades
         </span>
       </div>
 
-      {/* Stat cards */}
-      <div className="flex gap-3 mb-4">
-        <StatCard
-          label="TOTAL TRADES"
-          value={String(totalTrades)}
-          color="#E8EDF5"
-          borderColor="#1C2333"
-        />
-        <StatCard
-          label="TOTAL PROFIT"
-          value={animatedProfit.toFixed(2)}
-          color="#00FF88"
-          borderColor="#00FF88"
-          prefix="$"
-        />
-        <StatCard
-          label="SUCCESS RATE"
-          value={successRate}
-          color={successColor}
-          borderColor={successColor}
-          suffix="%"
-        />
+      {/* Stats */}
+      <div style={{ display: 'flex', gap: 1, padding: '16px 20px', background: '#000', borderBottom: '1px solid #1A1A1A' }}>
+        <StatCard label="Total Trades"  value={String(totalTrades)} />
+        <div style={{ width: 1, background: '#1A1A1A', flexShrink: 0 }} />
+        <StatCard label="Total Profit"  value={`$${animatedProfit.toFixed(2)}`} valueColor="#00FF88" />
+        <div style={{ width: 1, background: '#1A1A1A', flexShrink: 0 }} />
+        <StatCard label="Success Rate"  value={`${successRate}%`} valueColor={parseFloat(successRate) > 80 ? '#00FF88' : '#FFB800'} />
       </div>
 
       {/* Table */}
       <div style={{ overflowX: 'auto' }}>
-        <table
-          style={{
-            width: '100%',
-            borderCollapse: 'collapse',
-            tableLayout: 'auto',
-          }}
-        >
+        <table style={{ width: '100%', borderCollapse: 'collapse', tableLayout: 'auto' }}>
           <thead>
-            <tr style={{ background: '#080B0F', borderBottom: '2px solid #1C2333' }}>
-              {['TIME', 'EVENT', 'POLY SIDE', 'KALSHI SIDE', 'GROSS SPREAD', 'NET P&L', 'STATUS'].map(
-                (col) => (
-                  <th
-                    key={col}
-                    style={{
-                      fontFamily: 'JetBrains Mono, monospace',
-                      fontSize: 9,
-                      color: '#6B7688',
-                      letterSpacing: '0.1em',
-                      fontWeight: 600,
-                      textAlign: 'left',
-                      padding: '8px 10px',
-                      whiteSpace: 'nowrap',
-                    }}
-                  >
-                    {col}
-                  </th>
-                )
-              )}
+            <tr style={{ background: '#000', borderBottom: '1px solid #1A1A1A' }}>
+              {COLS.map((col) => (
+                <th key={col} style={{
+                  fontFamily: SANS, fontSize: 11, fontWeight: 600,
+                  color: '#888', letterSpacing: '0.1em',
+                  textAlign: 'left', padding: '9px 16px', whiteSpace: 'nowrap',
+                  textTransform: 'uppercase',
+                }}>
+                  {col}
+                </th>
+              ))}
             </tr>
           </thead>
           <tbody>
             {EXECUTIONS.map((exec, i) => {
-              const isEven = i % 2 === 0
-              const bgColor = isEven ? '#080B0F' : '#0D1117'
-              const pnlColor = exec.netPnl >= 0 ? '#00FF88' : '#FF3B5C'
-              const pnlGlow = exec.netPnl >= 0 ? 'glow-green' : 'glow-red'
-
+              const pnlColor = exec.netPnl >= 0 ? '#00FF88' : '#FF3355'
               return (
                 <tr
                   key={exec.id}
-                  className="scanline-row"
+                  className="row-enter"
                   style={{
-                    animationDelay: `${i * 50}ms`,
-                    background: bgColor,
-                    borderBottom: '1px solid #1C2333',
-                    transition: 'border-left 0.1s',
+                    animationDelay: `${i * 30}ms`,
+                    borderBottom: '1px solid #1A1A1A',
+                    transition: 'background 0.12s',
+                    cursor: 'default',
                   }}
-                  onMouseEnter={(e) => {
-                    ;(e.currentTarget as HTMLTableRowElement).style.borderLeft = '3px solid #00FF88'
-                    ;(e.currentTarget as HTMLTableRowElement).style.paddingLeft = '0px'
-                  }}
-                  onMouseLeave={(e) => {
-                    ;(e.currentTarget as HTMLTableRowElement).style.borderLeft = 'none'
-                  }}
+                  onMouseEnter={(e) => { (e.currentTarget as HTMLTableRowElement).style.background = '#0D0D0D' }}
+                  onMouseLeave={(e) => { (e.currentTarget as HTMLTableRowElement).style.background = 'transparent' }}
                 >
-                  <td
-                    style={{
-                      fontFamily: 'JetBrains Mono, monospace',
-                      fontSize: 10,
-                      color: '#6B7688',
-                      padding: '8px 10px',
-                      whiteSpace: 'nowrap',
-                    }}
-                  >
+                  <td style={{ fontFamily: MONO, fontSize: 11, color: '#666', padding: '11px 16px', whiteSpace: 'nowrap' }}>
                     {exec.time}
                   </td>
-                  <td
-                    style={{
-                      fontFamily: 'Syne, sans-serif',
-                      fontSize: 11,
-                      color: '#E8EDF5',
-                      padding: '8px 10px',
-                      maxWidth: '280px',
-                      overflow: 'hidden',
-                      textOverflow: 'ellipsis',
-                      whiteSpace: 'nowrap',
-                    }}
-                    title={exec.event}
-                  >
+                  <td style={{ fontFamily: SANS, fontSize: 13, color: '#CCCCCC', padding: '11px 16px', maxWidth: 280, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={exec.event}>
                     {exec.event}
                   </td>
-                  <td
-                    style={{
-                      fontFamily: 'JetBrains Mono, monospace',
-                      fontSize: 10,
-                      color: '#4fc3f7',
-                      padding: '8px 10px',
-                      whiteSpace: 'nowrap',
-                    }}
-                  >
+                  <td style={{ fontFamily: MONO, fontSize: 12, color: '#7B3FE4', padding: '11px 16px', whiteSpace: 'nowrap', fontVariantNumeric: 'tabular-nums' }}>
                     {exec.polymarketSide}
                   </td>
-                  <td
-                    style={{
-                      fontFamily: 'JetBrains Mono, monospace',
-                      fontSize: 10,
-                      color: '#F59E0B',
-                      padding: '8px 10px',
-                      whiteSpace: 'nowrap',
-                    }}
-                  >
+                  <td style={{ fontFamily: MONO, fontSize: 12, color: '#0066FF', padding: '11px 16px', whiteSpace: 'nowrap', fontVariantNumeric: 'tabular-nums' }}>
                     {exec.kalshiSide}
                   </td>
-                  <td
-                    style={{
-                      fontFamily: 'JetBrains Mono, monospace',
-                      fontSize: 11,
-                      color: '#F59E0B',
-                      padding: '8px 10px',
-                      whiteSpace: 'nowrap',
-                    }}
-                  >
+                  <td style={{ fontFamily: MONO, fontSize: 13, fontWeight: 600, color: '#fff', padding: '11px 16px', whiteSpace: 'nowrap', fontVariantNumeric: 'tabular-nums' }}>
                     {exec.grossSpread.toFixed(1)}%
                   </td>
-                  <td
-                    className={pnlGlow}
-                    style={{
-                      fontFamily: 'JetBrains Mono, monospace',
-                      fontSize: 11,
-                      fontWeight: 600,
-                      color: pnlColor,
-                      padding: '8px 10px',
-                      whiteSpace: 'nowrap',
-                    }}
-                  >
+                  <td style={{ fontFamily: MONO, fontSize: 13, fontWeight: 700, color: pnlColor, padding: '11px 16px', whiteSpace: 'nowrap', fontVariantNumeric: 'tabular-nums' }}>
                     {exec.netPnl >= 0 ? '+' : ''}${exec.netPnl.toFixed(2)}
                   </td>
-                  <td style={{ padding: '8px 10px', whiteSpace: 'nowrap' }}>
-                    {exec.status === 'CONFIRMED' && (
-                      <span
-                        style={{
-                          fontFamily: 'JetBrains Mono, monospace',
-                          fontSize: 9,
-                          color: '#00FF88',
-                          background: 'rgba(0,255,136,0.15)',
-                          border: '1px solid rgba(0,255,136,0.5)',
-                          padding: '3px 8px',
-                          letterSpacing: '0.08em',
-                          borderRadius: 0,
-                          textShadow: '0 0 8px rgba(0,255,136,0.5)',
-                        }}
-                      >
-                        ● CONFIRMED
-                      </span>
-                    )}
-                    {exec.status === 'PENDING' && (
-                      <span
-                        className="pending-pulse"
-                        style={{
-                          fontFamily: 'JetBrains Mono, monospace',
-                          fontSize: 9,
-                          color: '#F59E0B',
-                          background: 'rgba(245,158,11,0.1)',
-                          border: '1px solid rgba(245,158,11,0.4)',
-                          padding: '3px 8px',
-                          letterSpacing: '0.08em',
-                          borderRadius: 0,
-                        }}
-                      >
-                        ◌ PENDING
-                      </span>
-                    )}
-                    {exec.status === 'FAILED' && (
-                      <span
-                        style={{
-                          fontFamily: 'JetBrains Mono, monospace',
-                          fontSize: 9,
-                          color: '#FF3B5C',
-                          background: 'rgba(255,59,92,0.1)',
-                          border: '1px solid rgba(255,59,92,0.4)',
-                          padding: '3px 8px',
-                          letterSpacing: '0.08em',
-                          borderRadius: 0,
-                        }}
-                      >
-                        ✕ FAILED
-                      </span>
-                    )}
+                  <td style={{ padding: '11px 16px', whiteSpace: 'nowrap' }}>
+                    <StatusPill status={exec.status} />
                   </td>
                 </tr>
               )

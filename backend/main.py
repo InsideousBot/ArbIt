@@ -18,7 +18,7 @@ SIMILARITY_THRESHOLD = float(os.getenv("SIMILARITY_THRESHOLD", "0.70"))
 EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "all-mpnet-base-v2")
 
 _SYSTEM_DBS = {"admin", "local", "config"}
-_PREFERRED_DBS = ["prediction_markets", "Arbit", "arbit", "arbsignal"]
+_PREFERRED_DBS = ["arbsignal", "Arbit", "arbit", "prediction_markets"]
 
 app = FastAPI(title="ARBX API")
 

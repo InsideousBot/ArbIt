@@ -35,7 +35,6 @@ from algorithm.Phase_4.engine import ArbitrageEngine, persist_signals
 from algorithm.Phase_4.models import ArbitrageSignal, MatchedPair
 from algorithm.Phase_5.models import ValidatedOpportunity
 from algorithm.Phase_5.validator import TradeValidator, persist_validated
-from algorithm.models import CandidatePair
 
 logger = logging.getLogger(__name__)
 
@@ -125,11 +124,12 @@ async def run_pipeline(
         return result
 
     # ── Phase 3 → Phase 4 adapter ─────────────────────────────────────────────
-    # filter_accepted expects canonical CandidatePair; Phase 2 models are compatible
-    # (same fields, just imported from Phase_2.models vs algorithm.models).
-    # We need to convert Phase2CandidatePair → canonical CandidatePair first.
+    # Convert Phase2CandidatePair → canonical CandidatePair using the existing
+    # Phase 3 adapter, then filter to only ACCEPT'd pairs for Phase 4.
+    from algorithm.Phase_3.adapters import phase2_candidate_to_canonical
+
     canonical_candidates = [
-        _to_canonical(c) for c in accepted_candidates
+        phase2_candidate_to_canonical(c) for c in accepted_candidates
     ]
     result.matched_pairs = filter_accepted(canonical_candidates, result.accepted_pairs)
 
@@ -165,27 +165,3 @@ async def run_pipeline(
     return result
 
 
-def _to_canonical(p: Phase2CandidatePair) -> CandidatePair:
-    """Convert a Phase2CandidatePair to the canonical CandidatePair type."""
-    from algorithm.models import Market
-
-    def _to_market(m: object) -> Market:
-        # Phase2 MarketQuestion → minimal Market
-        if isinstance(m, Market):
-            return m
-        # It's a Phase2 model object — build a minimal Market from its fields
-        return Market(
-            platform=getattr(m, "platform", "unknown"),
-            market_id=getattr(m, "market_id", ""),
-            question=getattr(m, "question", ""),
-            outcomes=getattr(m, "outcomes", ["YES", "NO"]),
-            prices=getattr(m, "prices", {"YES": 0.5, "NO": 0.5}),
-        )
-
-    return CandidatePair(
-        candidate_id=p.candidate_id,
-        market_a=_to_market(p.market_a),
-        market_b=_to_market(p.market_b),
-        embedding_similarity=p.similarity_score,
-        metadata=getattr(p, "metadata", {}),
-    )

@@ -1,7 +1,7 @@
 'use client'
 import { useState, useEffect } from 'react'
 import { useCounter } from '@/lib/useCounter'
-import { OPPORTUNITIES } from '@/lib/mockData'
+import type { Execution, Opportunity } from '@/lib/types'
 
 const MONO = 'JetBrains Mono, monospace'
 const SANS = 'Inter, sans-serif'
@@ -22,25 +22,32 @@ function Section({ children }: { children: React.ReactNode }) {
   )
 }
 
-export default function Sidebar() {
+interface SidebarProps {
+  opportunities: Opportunity[]
+  executions: Execution[]
+  operatorEmail: string
+  onLogout: () => void
+}
+
+export default function Sidebar({ opportunities, executions, operatorEmail, onLogout }: SidebarProps) {
   const [syncSeconds, setSyncSeconds] = useState(12)
-  const [profitTarget, setProfitTarget] = useState(4847.32)
   const [minSpread, setMinSpread] = useState(3)
   const [minConfidence, setMinConfidence] = useState(70)
-  const animatedProfit = useCounter(profitTarget, 1000)
+  const confirmedProfit = executions
+    .filter((execution) => execution.status === 'CONFIRMED')
+    .reduce((sum, execution) => sum + execution.netPnl, 0)
+  const animatedProfit = useCounter(confirmedProfit, 1000)
 
   useEffect(() => {
     const t = setInterval(() => setSyncSeconds((s) => (s >= 60 ? 0 : s + 1)), 1000)
     return () => clearInterval(t)
   }, [])
 
-  useEffect(() => {
-    const t = setInterval(() => setProfitTarget((p) => p + Math.random() * 12 + 1), 8000)
-    return () => clearInterval(t)
-  }, [])
-
   const fmt = (s: number) => `${String(Math.floor(s / 60)).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`
-  const liveCount = OPPORTUNITIES.filter((o) => o.status === 'live').length
+  const liveCount = opportunities.filter((o) => o.status === 'live').length
+  const successRate = executions.length
+    ? ((executions.filter((execution) => execution.status === 'CONFIRMED').length / executions.length) * 100).toFixed(1)
+    : '0.0'
 
   const connections = [
     { label: 'Polymarket', dotColor: '#7B3FE4', statusText: 'Connected', statusColor: '#00FF88' },
@@ -68,6 +75,9 @@ export default function Sidebar() {
         </div>
         <div style={{ fontFamily: SANS, fontSize: 8, fontWeight: 600, color: '#666', letterSpacing: '0.2em', marginTop: 4 }}>
           PREDICTION MARKET ARBITRAGE
+        </div>
+        <div style={{ marginTop: 10, fontFamily: MONO, fontSize: 10, color: '#888', wordBreak: 'break-word' }}>
+          {operatorEmail}
         </div>
       </div>
 
@@ -112,7 +122,7 @@ export default function Sidebar() {
           <div>
             <Label>Success Rate</Label>
             <div style={{ fontFamily: MONO, fontSize: 28, fontWeight: 700, color: '#fff', lineHeight: 1, fontVariantNumeric: 'tabular-nums' }}>
-              78.6%
+              {successRate}%
             </div>
           </div>
         </div>
@@ -148,9 +158,27 @@ export default function Sidebar() {
 
       {/* Footer */}
       <div style={{ marginTop: 'auto', padding: '10px 16px', borderTop: '1px solid #1A1A1A' }}>
-        <span style={{ fontFamily: MONO, fontSize: 9, color: '#666' }}>
-          SYNC <span style={{ color: '#888' }}>{fmt(syncSeconds)}</span> AGO
-        </span>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
+          <span style={{ fontFamily: MONO, fontSize: 9, color: '#666' }}>
+            SYNC <span style={{ color: '#888' }}>{fmt(syncSeconds)}</span> AGO
+          </span>
+          <button
+            onClick={onLogout}
+            style={{
+              border: '1px solid #1A1A1A',
+              background: 'transparent',
+              color: '#888',
+              borderRadius: 999,
+              padding: '4px 10px',
+              fontFamily: SANS,
+              fontSize: 10,
+              letterSpacing: '0.12em',
+              cursor: 'pointer',
+            }}
+          >
+            LOG OUT
+          </button>
+        </div>
       </div>
 
     </div>

@@ -2,14 +2,16 @@ import { NavLink } from 'react-router-dom';
 
 interface TabBarProps {
   signalCount: number;
+  executionCount: number;
   isLive: boolean;
 }
 
-export default function TabBar({ signalCount, isLive }: TabBarProps) {
+export default function TabBar({ signalCount, executionCount, isLive }: TabBarProps) {
   const tabs = [
     { label: 'Opportunity Feed', to: '/signals', count: signalCount },
     { label: 'Matches Explorer', to: '/markets', count: null },
-    { label: 'Simulation', to: '/simulation', count: null },
+    { label: 'Execution Log',    to: '/execution', count: executionCount > 0 ? executionCount : null },
+    { label: 'Spread History',   to: '/simulation', count: null },
   ];
 
   return (

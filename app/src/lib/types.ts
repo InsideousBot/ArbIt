@@ -150,6 +150,16 @@ export interface PnlPoint {
   cumulative_pnl: number;
 }
 
+export interface ExecutedTrade {
+  id: string;
+  executedAt: string;        // HH:MM:SS
+  signal: ArbitrageSignal;
+  status: 'CONFIRMED' | 'PENDING' | 'FAILED';
+  netPnl: number | null;
+  sideA: string;             // e.g. "SELL YES @ 0.670"
+  sideB: string;             // e.g. "BUY YES @ 0.610"
+}
+
 export interface AppConfig {
   embedding_model: string;
   similarity_threshold: number;

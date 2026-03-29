@@ -2,6 +2,8 @@ import type { SignalsStats, AppConfig } from '../lib/types';
 
 interface SidebarProps {
   stats: SignalsStats | null;
+  totalPnl: number;
+  successRate: number;
   minSpread: number;
   onMinSpread: (v: number) => void;
   minConfidence: number;
@@ -17,6 +19,8 @@ function formatDollar(n: number): string {
 
 export default function Sidebar({
   stats,
+  totalPnl,
+  successRate,
   minSpread,
   onMinSpread,
   minConfidence,
@@ -26,8 +30,6 @@ export default function Sidebar({
   const isConnected = config?.db_status === 'connected';
 
   const activeOpportunities = stats?.total ?? 0;
-  const totalProfit = stats?.total_ev ?? 0;
-  const successRate = stats ? (stats.avg_confidence * 100).toFixed(1) : '—';
 
   const connections = [
     { label: 'Polymarket', status: 'Connected', color: '#22c55e' },
@@ -137,7 +139,7 @@ export default function Sidebar({
             TOTAL PROFIT TODAY
           </div>
           <div style={{ fontSize: '20px', fontWeight: '700', color: '#22c55e', lineHeight: 1 }}>
-            {formatDollar(totalProfit)}
+            {formatDollar(totalPnl)}
           </div>
         </div>
 
@@ -146,7 +148,7 @@ export default function Sidebar({
             SUCCESS RATE
           </div>
           <div style={{ fontSize: '18px', fontWeight: '600', color: '#e2e8f0', lineHeight: 1 }}>
-            {successRate}%
+            {successRate.toFixed(1)}%
           </div>
         </div>
       </div>

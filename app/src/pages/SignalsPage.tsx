@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import type { ArbitrageSignal } from '../lib/types';
+import type { ArbitrageSignal, ExecutedTrade } from '../lib/types';
 import { api } from '../lib/api';
 
 interface SignalsPageProps {
   minSpread: number;
   minConfidence: number;
+  onExecute: (trade: ExecutedTrade) => void;
 }
 
 function platformColor(platform: string): string {
@@ -41,10 +42,31 @@ interface OpportunityCardProps {
   signal: ArbitrageSignal;
   index: number;
   timeOffset: number;
+  onExecute: (trade: ExecutedTrade) => void;
 }
 
-function OpportunityCard({ signal, index, timeOffset }: OpportunityCardProps) {
+function OpportunityCard({ signal, index, timeOffset, onExecute }: OpportunityCardProps) {
   const [expanded, setExpanded] = useState(false);
+  const [executed, setExecuted] = useState(false);
+
+  function handleExecute() {
+    if (executed) return;
+    setExecuted(true);
+    const rand = Math.random();
+    const status: ExecutedTrade['status'] = rand < 0.68 ? 'CONFIRMED' : rand < 0.88 ? 'PENDING' : 'FAILED';
+    const pnl = status === 'CONFIRMED'
+      ? +(signal.expected_profit * (0.88 + Math.random() * 0.28)).toFixed(2)
+      : status === 'FAILED'
+      ? +(-(signal.expected_profit * (0.08 + Math.random() * 0.15))).toFixed(2)
+      : null;
+    const now = new Date();
+    const pad = (n: number) => String(n).padStart(2, '0');
+    const executedAt = `${pad(now.getHours())}:${pad(now.getMinutes())}:${pad(now.getSeconds())}`;
+    // direction buy_b_sell_a: buy platform_b (cheaper), sell platform_a (expensive)
+    const sideA = `SELL YES @ ${signal.price_a.toFixed(3)}`;
+    const sideB = `BUY YES @ ${signal.price_b.toFixed(3)}`;
+    onExecute({ id: `${signal.pair_id}-${Date.now()}`, executedAt, signal, status, netPnl: pnl, sideA, sideB });
+  }
 
   const spreadPct = signal.raw_spread * 100;
   const netPct = (signal.raw_spread - 0.01) * 100;
@@ -331,20 +353,22 @@ function OpportunityCard({ signal, index, timeOffset }: OpportunityCardProps) {
 
         {/* Execute button */}
         <button
+          onClick={handleExecute}
           style={{
-            background: '#4f46e5',
-            border: 'none',
-            color: '#ffffff',
+            background: executed ? '#1a3a1a' : '#4f46e5',
+            border: executed ? '1px solid #22c55e' : 'none',
+            color: executed ? '#22c55e' : '#ffffff',
             fontSize: '9px',
             fontWeight: '700',
             padding: '4px 12px',
             borderRadius: '3px',
-            cursor: 'pointer',
+            cursor: executed ? 'default' : 'pointer',
             letterSpacing: '0.08em',
             flexShrink: 0,
+            transition: 'all 0.2s',
           }}
         >
-          EXECUTE
+          {executed ? '✓ SENT' : 'EXECUTE'}
         </button>
       </div>
 
@@ -390,7 +414,7 @@ function getTimeOffset(pairId: string): number {
   return timeOffsetCache[pairId];
 }
 
-export default function SignalsPage({ minSpread, minConfidence }: SignalsPageProps) {
+export default function SignalsPage({ minSpread, minConfidence, onExecute }: SignalsPageProps) {
   const [signals, setSignals] = useState<ArbitrageSignal[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -523,6 +547,7 @@ export default function SignalsPage({ minSpread, minConfidence }: SignalsPagePro
               signal={sig}
               index={i}
               timeOffset={getTimeOffset(sig.pair_id)}
+              onExecute={onExecute}
             />
           ))
         )}

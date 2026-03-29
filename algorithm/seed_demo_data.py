@@ -140,6 +140,29 @@ QUESTION_TEMPLATES = [
      "kalshi", "polymarket", (0.38, 0.70)),
 ]
 
+MANIFOLD_QUESTIONS = [
+    "Will Jerome Powell cut rates before end of 2025?",
+    "Will BTC hit $100k in 2025?",
+    "Will Nvidia stock 2x in 2025?",
+    "Will GPT-5 be released by December 2025?",
+    "Will the S&P 500 end 2025 above 5500?",
+    "Will inflation drop below 3% by June 2025?",
+    "Will SpaceX land on Mars by 2030?",
+    "Will the Ukraine war end in 2025?",
+    "Will a US recession happen in 2025?",
+    "Will OpenAI release an agent that can do most programming tasks?",
+    "Will Apple launch AR glasses in 2025?",
+    "Will Tesla autopilot achieve full self-driving in 2025?",
+    "Will the 30-year mortgage rate fall below 6% in 2025?",
+    "Will Amazon stock hit $250 by end of 2025?",
+    "Will Google win the AI search race in 2025?",
+    "Will Meta's AI assistant surpass ChatGPT in users?",
+    "Will a major US bank fail in 2025?",
+    "Will gold hit $3000/oz in 2025?",
+    "Will the US pass crypto regulation in 2025?",
+    "Will Biden run for president again in 2028?",
+]
+
 MONTHS = ["January","February","March","April","May","June","July","August","September","October","November","December"]
 YEARS  = [2024, 2025]
 TICKERS = ["AAPL","NVDA","TSLA","MSFT","AMZN","GOOGL","META","AMD","NFLX","PLTR"]
@@ -349,6 +372,9 @@ def seed(db) -> None:
     # ── 3. Generate 500 signals (one per matched pair, spread across exit dates) ─
     print("Generating 500 signals…")
     signal_docs: list[dict] = []
+    # Track manifold market docs to insert into markets collection
+    manifold_market_docs: list[dict] = []
+
     for i, pt in enumerate(pair_topics):
         # Stagger exit dates: spread the 100 matched pairs across the year
         # then duplicate each ~5× with slightly varied parameters to hit 500
@@ -368,14 +394,43 @@ def seed(db) -> None:
             ev = round(var_spread * size * rng.uniform(0.85, 1.05), 2)
             conf = round(rng.triangular(0.62, 0.96, 0.82), 3)
             sig_id = f"sig-{i+1:04d}-v{variant}"
+
+            # Every 5th variant (variant == 4): use manifold as platform_b
+            use_manifold = (variant == 4)
+            if use_manifold:
+                mani_id = f"mani-{i+1:04d}-v{variant}"
+                mani_question = MANIFOLD_QUESTIONS[(i * 5 + variant) % len(MANIFOLD_QUESTIONS)]
+                end_date_obj = pt.get("end_date", YEAR_AGO + timedelta(days=180))
+                # Create manifold market doc
+                manifold_market_docs.append({
+                    "_demo": True,
+                    "platform": "manifold",
+                    "market_id": mani_id,
+                    "question": mani_question,
+                    "yes_price": var_price_b,
+                    "no_price": round(1 - var_price_b, 4),
+                    "end_date": datetime(
+                        end_date_obj.year if isinstance(end_date_obj, _date) and not isinstance(end_date_obj, datetime) else (end_date_obj.year if hasattr(end_date_obj, 'year') else YEAR_AGO.year),
+                        end_date_obj.month if hasattr(end_date_obj, 'month') else 6,
+                        end_date_obj.day if hasattr(end_date_obj, 'day') else 1,
+                        16, 0, 0, tzinfo=timezone.utc,
+                    ),
+                    "volume": rng.randint(5_000, 80_000),
+                })
+                platform_b = "manifold"
+                market_b_id = mani_id
+            else:
+                platform_b = "polymarket"
+                market_b_id = pt["p_id"]
+
             signal_docs.append({
                 "_demo": True,
                 "signal_id": sig_id,
                 "pair_id": candidate_docs[i]["id"],
                 "market_a_id": pt["k_id"],
-                "market_b_id": pt["p_id"],
+                "market_b_id": market_b_id,
                 "platform_a": "kalshi",
-                "platform_b": "polymarket",
+                "platform_b": platform_b,
                 "price_a": var_price_a,
                 "price_b": var_price_b,
                 "direction": "buy_b_sell_a",
@@ -389,6 +444,11 @@ def seed(db) -> None:
                 "_exit_date_override": exit_date,
                 "_entry_date_override": entry_date,
             })
+
+    # Insert manifold market docs
+    if manifold_market_docs:
+        db["markets"].insert_many(manifold_market_docs)
+        print(f"  Inserted {len(manifold_market_docs)} manifold markets")
 
     for chunk_start in range(0, len(signal_docs), 500):
         db["signals"].insert_many(signal_docs[chunk_start:chunk_start + 500])

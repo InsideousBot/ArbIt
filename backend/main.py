@@ -210,6 +210,21 @@ def get_signals(
                 p = pairs.get(doc.get("pair_id"), {})
                 doc["text_a"] = p.get("text_a", "")
                 doc["text_b"] = p.get("text_b", "")
+        # Enrich with volume from markets collection
+        all_market_ids = list(
+            {d.get("market_a_id") for d in docs} | {d.get("market_b_id") for d in docs} - {None, ""}
+        )
+        if all_market_ids:
+            vols = {
+                m["market_id"]: m.get("volume", 0)
+                for m in db["markets"].find(
+                    {"market_id": {"$in": all_market_ids}},
+                    {"_id": 0, "market_id": 1, "volume": 1},
+                )
+            }
+            for doc in docs:
+                doc["volume_a"] = vols.get(doc.get("market_a_id"), 0)
+                doc["volume_b"] = vols.get(doc.get("market_b_id"), 0)
         if use_diverse and docs:
             docs = _diversify_signals_mmr(docs, limit=limit, diversity_lambda=diversity_lambda)
         elif len(docs) > limit:

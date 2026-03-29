@@ -114,3 +114,15 @@ body {
   border-left: 3px solid;
   border-image: linear-gradient(180deg, #ff6b35, rgba(255,107,53,0.3)) 1;
 }
+
+/* Ticker animation */
+@keyframes ticker-scroll {
+  0% { transform: translateX(0); }
+  100% { transform: translateX(-50%); }
+}
+.ticker-track {
+  animation: ticker-scroll 60s linear infinite;
+}
+.ticker-track:hover {
+  animation-play-state: paused;
+}

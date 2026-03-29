@@ -108,6 +108,8 @@ export interface ArbitrageSignal {
   confidence: number;
   regression_convergence_prob: number;
   created_at: string;
+  volume_a?: number;
+  volume_b?: number;
 }
 
 export interface SignalsStats {

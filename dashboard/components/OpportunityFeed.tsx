@@ -1,12 +1,17 @@
 'use client'
-import { OPPORTUNITIES } from '@/lib/mockData'
+import type { Opportunity } from '@/lib/types'
 import OpportunityCard from './OpportunityCard'
 
 const SANS = 'Inter, sans-serif'
 const MONO = 'JetBrains Mono, monospace'
 
-export default function OpportunityFeed() {
-  const liveOpps = OPPORTUNITIES.filter((o) => o.status === 'live')
+interface OpportunityFeedProps {
+  opportunities: Opportunity[]
+  onExecute: (opportunityId: string) => void
+}
+
+export default function OpportunityFeed({ opportunities, onExecute }: OpportunityFeedProps) {
+  const liveOpps = opportunities.filter((o) => o.status === 'live')
 
   return (
     <div>
@@ -48,7 +53,7 @@ export default function OpportunityFeed() {
       ) : (
         <div>
           {liveOpps.map((opp, i) => (
-            <OpportunityCard key={opp.id} opportunity={opp} index={i} />
+            <OpportunityCard key={opp.id} opportunity={opp} index={i} onExecute={onExecute} />
           ))}
         </div>
       )}

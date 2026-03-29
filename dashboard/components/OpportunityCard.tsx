@@ -5,9 +5,9 @@ import type { Opportunity } from '@/lib/types'
 const MONO = 'JetBrains Mono, monospace'
 const SANS = 'Inter, sans-serif'
 
-interface Props { opportunity: Opportunity; index: number }
+interface Props { opportunity: Opportunity; index: number; onExecute: (opportunityId: string) => void }
 
-export default function OpportunityCard({ opportunity }: Props) {
+export default function OpportunityCard({ opportunity, onExecute }: Props) {
   const [reasoningOpen, setReasoningOpen] = useState(false)
   const [hovered, setHovered] = useState(false)
   const [execHovered, setExecHovered] = useState(false)
@@ -20,6 +20,7 @@ export default function OpportunityCard({ opportunity }: Props) {
 
   const arbLeft  = arbType === 'YES_YES' ? 'BUY YES'  : 'BUY NO'
   const arbRight = arbType === 'YES_YES' ? 'SELL YES' : 'BUY YES'
+  const executeLabel = opportunity.status === 'executed' ? 'EXECUTED' : 'EXECUTE'
 
   return (
     <div
@@ -193,6 +194,9 @@ export default function OpportunityCard({ opportunity }: Props) {
         </button>
 
         <button
+          onClick={() => {
+            if (opportunity.status !== 'executed') onExecute(opportunity.id)
+          }}
           onMouseEnter={() => setExecHovered(true)}
           onMouseLeave={() => setExecHovered(false)}
           style={{
@@ -200,15 +204,16 @@ export default function OpportunityCard({ opportunity }: Props) {
             letterSpacing: '0.08em',
             padding: '5px 18px',
             borderRadius: 20,
-            border: `1px solid ${execHovered ? '#00FF88' : '#333'}`,
-            background: execHovered ? '#00FF88' : 'transparent',
-            color: execHovered ? '#000' : '#fff',
-            cursor: 'pointer',
+            border: `1px solid ${opportunity.status === 'executed' ? '#00FF88' : execHovered ? '#00FF88' : '#333'}`,
+            background: opportunity.status === 'executed' ? '#00FF88' : execHovered ? '#00FF88' : 'transparent',
+            color: opportunity.status === 'executed' || execHovered ? '#000' : '#fff',
+            cursor: opportunity.status === 'executed' ? 'default' : 'pointer',
             transition: 'all 0.2s',
             flexShrink: 0,
+            opacity: opportunity.status === 'executed' ? 0.9 : 1,
           }}
         >
-          EXECUTE
+          {executeLabel}
         </button>
       </div>
 

@@ -1,7 +1,7 @@
 'use client'
-import { useState, useEffect } from 'react'
 import { useCounter } from '@/lib/useCounter'
-import { EXECUTIONS } from '@/lib/mockData'
+import { useEffect, useState } from 'react'
+import type { Execution } from '@/lib/types'
 
 const MONO = 'JetBrains Mono, monospace'
 const SANS = 'Inter, sans-serif'
@@ -45,17 +45,20 @@ function StatusPill({ status }: { status: string }) {
 
 const COLS = ['TIME', 'EVENT', 'POLY SIDE', 'KALSHI SIDE', 'SPREAD', 'NET P&L', 'STATUS']
 
-export default function ExecutionLog() {
-  const confirmed = EXECUTIONS.filter((e) => e.status === 'CONFIRMED')
+interface ExecutionLogProps {
+  executions: Execution[]
+}
+
+export default function ExecutionLog({ executions }: ExecutionLogProps) {
+  const confirmed = executions.filter((e) => e.status === 'CONFIRMED')
   const [profitTarget, setProfitTarget] = useState(confirmed.reduce((s, e) => s + e.netPnl, 0))
   const animatedProfit = useCounter(profitTarget, 800)
 
   useEffect(() => {
-    const t = setInterval(() => setProfitTarget((p) => p + Math.random() * 8 + 1), 5000)
-    return () => clearInterval(t)
-  }, [])
+    setProfitTarget(confirmed.reduce((sum, execution) => sum + execution.netPnl, 0))
+  }, [confirmed])
 
-  const totalTrades = EXECUTIONS.length
+  const totalTrades = executions.length
   const successRate = ((confirmed.length / totalTrades) * 100).toFixed(1)
 
   return (
@@ -108,7 +111,7 @@ export default function ExecutionLog() {
             </tr>
           </thead>
           <tbody>
-            {EXECUTIONS.map((exec, i) => {
+            {executions.map((exec, i) => {
               const pnlColor = exec.netPnl >= 0 ? '#00FF88' : '#FF3355'
               return (
                 <tr
